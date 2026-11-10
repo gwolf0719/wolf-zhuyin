@@ -1,6 +1,6 @@
 # 狼注音
 
-macOS 專用注音輸入法（大千鍵盤）：自動中英切換、整句選字、Tab 預測。
+macOS 專用注音輸入法（大千鍵盤）：自動中英切換、整句選字、Tab 預測（預測尚未開始）。
 
 ## 系統環境
 - Swift 6.3（Swift Package）：引擎 `WolfEngine`、命令列 `wolf`、輸入法外殼 `WolfIME`、端對端測試 `WolfE2E`。
@@ -25,4 +25,9 @@ macOS 專用注音輸入法（大千鍵盤）：自動中英切換、整句選�
 - `Eval/dev.txt` 可以看錯誤來調參；`Eval/test.txt` 是保留集，只回報數字，不針對它調。
 
 ## 部署
-尚無。自用為主，保留公開發行的可能（屆時需 Developer ID 簽章與 notarization）。
+- 公開專案：https://github.com/gwolf0719/wolf-zhuyin （MIT）。
+- **發版＝對外發布，要使用者同意才做**：`scripts/release.sh <版本號>`（測試 → 寫版本號 → 打包 → 簽章 → push ＋ GitHub Release）。已安裝的輸入法每天查一次，會自動裝上新版。
+- 簽章私鑰在 `~/.config/wolf-zhuyin/release-signing-key`（不在版本庫）。對應公鑰寫死在 `Sources/WolfUpdate/Update.swift`。**私鑰遺失或外洩都要換金鑰，而已安裝的舊版只認舊公鑰，使用者得重新跑安裝指令。**
+- 沒有 Apple Developer ID：成品只有 ad-hoc 簽章。靠 `install.sh`（curl 下載不會被 Gatekeeper 隔離）安裝；不要改成讓人從瀏覽器下載 `.app`／`.pkg`，會被擋。
+- 只建置 arm64（Command Line Tools 建不了 universal）。
+- 確認發版狀態：`gh release list -R gwolf0719/wolf-zhuyin`；已安裝版本：`WolfZhuyin --version`；手動觸發更新：`WolfZhuyin --check-update`。
