@@ -24,6 +24,16 @@ public struct Segmenter: Sendable {
         public var rawSpace = -0.3
         /// 標點。
         public var punctuation = -1.0
+        /// 是否修正注音打錯。
+        public var typoTolerance = true
+        /// 修正「按鍵順序顛倒」的代價。
+        public var typoOrder = -1.5
+        /// 修正「漏按聲調」的代價。
+        public var typoMissingTone = -2.5
+        /// 修正「按到隔壁鍵」的代價。
+        public var typoNeighbor = -4.0
+        /// 修正後組成的詞至少要這麼常見才採用。
+        public var typoMinWordScore = -6.0
         /// 中英切換一次的代價。
         public var languageSwitch = -1.0
         public init() {}
@@ -48,10 +58,22 @@ public struct Segmenter: Sendable {
         let score: Double
         /// 中文詞的讀音（如 ㄋㄧˇ-ㄏㄠˇ）。
         var reading: String? = nil
+        /// 中文詞每個音節結束的按鍵位置（容錯後音節的按鍵不一定照標準排列，所以要另外記）。
+        var syllableEnds: [Int] = []
+        /// 這條邊是把打錯的按鍵修正後才成立的。
+        var isCorrection = false
         /// 原樣輸出的單一按鍵。
         var isRawKey = false
         /// 標點邊：不改變前面的語言狀態，全形或半形等整條路徑定案後再決定。
         var punctuation: Character? = nil
+    }
+
+    /// 某個位置可以解讀成的一個音節。
+    private struct SyllableOption {
+        let reading: String
+        let end: Int
+        /// 0 表示照標準打法；負數是修正打錯的代價。
+        let penalty: Double
     }
 
     private static let maxSyllablesPerWord = 8
@@ -70,6 +92,8 @@ public struct Segmenter: Sendable {
         let keys: Range<Int>
         var text: String
         var reading: String?
+        /// 中文詞每個音節結束的按鍵位置。
+        var syllableEnds: [Int] = []
         /// 無法解讀、原樣輸出的單一按鍵。
         var isRawKey = false
         /// 結尾打到一半的音節。
@@ -132,13 +156,8 @@ public struct Segmenter: Sendable {
         var syllables: [(reading: String, start: Int)] = []
         for piece in all.reversed() {
             guard let reading = piece.reading else { break }
-            var position = piece.keys.lowerBound
-            var parsed: [(String, Int)] = []
-            for _ in reading.split(separator: "-") {
-                guard let syllable = Dachen.syllable(in: keys, from: position) else { break }
-                parsed.append((syllable.reading, position))
-                position = syllable.end
-            }
+            let starts = [piece.keys.lowerBound] + piece.syllableEnds.dropLast()
+            let parsed = zip(reading.split(separator: "-"), starts).map { (String($0), $1) }
             syllables.insert(contentsOf: parsed, at: 0)
         }
         var result: [Candidate] = []
@@ -162,13 +181,8 @@ public struct Segmenter: Sendable {
         for piece in pieces(keys, afterChinese: afterChinese, showPending: true) {
             let base = text.count
             text += piece.text
-            if let reading = piece.reading, reading.split(separator: "-").count == piece.text.count {
-                var position = piece.keys.lowerBound
-                for index in 1...piece.text.count {
-                    guard let syllable = Dachen.syllable(in: keys, from: position) else { break }
-                    position = syllable.end
-                    stops.append((position, base + index))
-                }
+            if piece.reading != nil, piece.syllableEnds.count == piece.text.count {
+                for (index, end) in piece.syllableEnds.enumerated() { stops.append((end, base + index + 1)) }
             } else if piece.language == .english, piece.keys.count == piece.text.count {
                 for index in 1...piece.text.count { stops.append((piece.keys.lowerBound + index, base + index)) }
             }
@@ -188,14 +202,8 @@ public struct Segmenter: Sendable {
         let all = pieces(keys, afterChinese: afterChinese, showPending: true)
         guard let last = all.last else { return 0 }
         if last.isPending { return 1 }
-        if let reading = last.reading {
-            var position = last.keys.lowerBound
-            var lastSyllableStart = position
-            for _ in reading.split(separator: "-") {
-                guard let syllable = Dachen.syllable(in: keys, from: position) else { break }
-                lastSyllableStart = position
-                position = syllable.end
-            }
+        if last.reading != nil {
+            let lastSyllableStart = last.syllableEnds.dropLast().last ?? last.keys.lowerBound
             return keys.count - lastSyllableStart
         }
         guard last.isRawKey, keys[last.keys.lowerBound] != " " else { return 1 }
@@ -217,6 +225,10 @@ public struct Segmenter: Sendable {
             for edge in edges(in: keys, from: position) {
                 let to = edge.language == .chinese ? 0 : 1
                 for from in 0..<2 where best[position][from] > -.infinity {
+                    // 修正打錯的邊只能出現在中文語境：開頭、中文後面，或空白與標點後面。
+                    // 緊接在英數字後面的不修，避免把英文字的後半段改成中文。
+                    if edge.isCorrection, position > 0, languages[from] == .english,
+                       keys[position - 1].isLetter || keys[position - 1].isNumber { continue }
                     // 標點邊維持前一個語言狀態，不算切換。
                     if edge.punctuation != nil, languages[from] != edge.language { continue }
                     let switched = position > 0 && languages[from] != edge.language
@@ -254,7 +266,7 @@ public struct Segmenter: Sendable {
         return path.enumerated().map { index, edge in
             var piece = Piece(
                 language: edge.language, keys: edge.start..<edge.end, text: edge.text,
-                reading: edge.reading, isRawKey: edge.isRawKey
+                reading: edge.reading, syllableEnds: edge.syllableEnds, isRawKey: edge.isRawKey
             )
             if let key = edge.punctuation {
                 piece.language = fullWidth[index] ? .chinese : .english
@@ -341,17 +353,38 @@ public struct Segmenter: Sendable {
             ))
         }
 
-        // 中文詞：從這裡連續解析出的音節，每個前綴去查詞庫。
-        var reading = ""
-        var position = start
-        for _ in 0..<Self.maxSyllablesPerWord {
-            guard let syllable = Dachen.syllable(in: keys, from: position),
-                  lexicon.syllables.contains(syllable.reading) else { break }
-            reading += reading.isEmpty ? syllable.reading : "-" + syllable.reading
-            position = syllable.end
-            if let entry = entries(for: reading).first {
-                result.append(Edge(start: start, end: position, language: .chinese, text: entry.text, score: entry.score, reading: reading))
+        // 中文詞：從這裡一個音節一個音節接下去，每個前綴去查詞庫。
+        // 一個詞裡最多修正一個打錯的音節。
+        struct Chain {
+            var reading = ""
+            var ends: [Int] = []
+            var penalty = 0.0
+        }
+        var chains = [Chain()]
+        for _ in 0..<Self.maxSyllablesPerWord where !chains.isEmpty {
+            var extended: [Chain] = []
+            for chain in chains {
+                for option in syllableOptions(in: keys, from: chain.ends.last ?? start) {
+                    if option.penalty < 0, chain.penalty < 0 { continue }
+                    var next = chain
+                    next.reading += next.reading.isEmpty ? option.reading : "-" + option.reading
+                    next.ends.append(option.end)
+                    next.penalty += option.penalty
+                    extended.append(next)
+                    // 修正過的音節要連同旁邊的字組成一個夠常見的詞才採用：這是「使用者真的想打這個」最強的證據。
+                    // 單一個字的修正太容易把 v3、x86 這類內容改掉。
+                    let isCorrection = next.penalty < 0
+                    if let entry = entries(for: next.reading).first,
+                       !isCorrection || (next.ends.count >= 2 && entry.score >= weights.typoMinWordScore) {
+                        result.append(Edge(
+                            start: start, end: option.end, language: .chinese, text: entry.text,
+                            score: entry.score + next.penalty, reading: next.reading,
+                            syllableEnds: next.ends, isCorrection: next.penalty < 0
+                        ))
+                    }
+                }
             }
+            chains = extended
         }
 
         // 英文詞：必須從字母串的開頭起算，避免從音節中間認出英文字（如「今」rup 裡的 up）。
@@ -367,6 +400,70 @@ public struct Segmenter: Sendable {
             }
         }
         return result
+    }
+}
+
+// MARK: - 打錯容錯
+
+extension Segmenter {
+    /// 從某個位置起可以解讀成哪些音節：照標準打法的那一個（如果成立），加上修正手誤後的可能。
+    /// 修正三種常見的手誤，各有代價：
+    /// 1. 按鍵順序顛倒（su3 打成 s3u、us3）
+    /// 2. 漏按聲調就接著打下一個字（su3cl3 打成 sucl3）
+    /// 3. 其中一鍵按到隔壁（su3 打成 sy3）
+    ///
+    /// 修正必須有「使用者確實在打注音」的證據，否則會把 npm、cpu、100 這類內容改成中文：
+    /// - 一定要有數字聲調鍵（3 4 6 7）。空白當聲調的一聲不修，因為空白也是英文的分隔。
+    /// - 音節裡至少要有一個字母鍵，全是數字與符號的當成數字（3.5、100）。
+    /// - 修正後要能和旁邊的字組成常見的詞（在 `edges` 裡檢查）。
+    private func syllableOptions(in keys: [Character], from start: Int) -> [SyllableOption] {
+        var options: [SyllableOption] = []
+        var seen: Set<String> = []
+        func add(_ reading: String, _ end: Int, _ penalty: Double) {
+            guard lexicon.syllables.contains(reading), seen.insert("\(reading)@\(end)").inserted else { return }
+            options.append(SyllableOption(reading: reading, end: end, penalty: penalty))
+        }
+        if let exact = Dachen.syllable(in: keys, from: start) { add(exact.reading, exact.end, 0) }
+        guard weights.typoTolerance else { return options }
+
+        func isToneDigit(_ key: Character) -> Bool { key != " " && Dachen.tones[key] != nil }
+        func hasLetterSymbol(_ range: Range<Int>) -> Bool {
+            keys[range].contains { Dachen.isSymbolKey($0) && $0.isLetter }
+        }
+        // 聲調鍵開頭的不修：那個聲調多半屬於前一個字。
+        guard start < keys.count, Dachen.tones[keys[start]] == nil else { return options }
+
+        // 1. 順序顛倒：接下來 2–4 個鍵剛好是「聲母、介音、韻母各至多一個＋一個聲調」，只是順序不對。
+        for length in 2...4 where start + length <= keys.count {
+            let range = start..<start + length
+            guard keys[range].contains(where: isToneDigit), hasLetterSymbol(range),
+                  let reading = Dachen.syllable(fromUnordered: keys[range]) else { continue }
+            add(reading, range.upperBound, weights.typoOrder)
+        }
+
+        // 2. 漏按聲調：2–3 個注音鍵後面緊接著一個打對的、帶數字聲調的音節。
+        for length in 2...3 where start + length < keys.count {
+            let range = start..<start + length
+            // 剛好是英文字的（up、so）不當成漏聲調。
+            guard hasLetterSymbol(range), english.tier(of: String(keys[range])) == nil,
+                  let symbols = Dachen.symbols(for: keys[range]),
+                  let next = Dachen.syllable(in: keys, from: range.upperBound),
+                  lexicon.syllables.contains(next.reading), isToneDigit(keys[next.end - 1]) else { continue }
+            for tone in Dachen.tones.values { add(symbols + tone, range.upperBound, weights.typoMissingTone) }
+        }
+
+        // 3. 按到隔壁鍵：把其中一個注音鍵換成鍵盤上相鄰的鍵後，照標準打法能成立。聲調鍵本身不換。
+        // 只修字母鍵：數字鍵按錯和「本來就想打數字」（x86、v3）分不出來。
+        for offset in 0..<3 where start + offset < keys.count && keys[start + offset].isLetter {
+            for neighbor in Dachen.neighbors[keys[start + offset]] ?? [] where Dachen.isSymbolKey(neighbor) {
+                var corrected = keys
+                corrected[start + offset] = neighbor
+                guard let syllable = Dachen.syllable(in: corrected, from: start), syllable.end - 1 > start + offset,
+                      isToneDigit(keys[syllable.end - 1]), hasLetterSymbol(start..<syllable.end) else { continue }
+                add(syllable.reading, syllable.end, weights.typoNeighbor)
+            }
+        }
+        return options
     }
 }
 

@@ -39,15 +39,18 @@ private func type(_ keys: String, then last: Composer.Key? = nil, composer: inou
     #expect(composer.handle(.backspace).marked == "你ㄏ")
     #expect(composer.handle(.backspace).marked == "你")
     // 注音打錯變成一串認不出來的按鍵：一次刪整串。
-    #expect(type("s3u", composer: &composer).marked == "你s3u")
+    #expect(type("q3w", composer: &composer).marked == "你q3w")
     #expect(composer.handle(.backspace).marked == "你")
     // 打錯的那串後面還有正確的字：先刪字，再刪整串。
-    #expect(type("s3ucl3", composer: &composer).marked == "你s3u好")
+    #expect(type("q3wcl3", composer: &composer).marked == "你q3w好")
+    #expect(composer.handle(.backspace).marked == "你q3w")
+    #expect(composer.handle(.backspace).marked == "你")
+    // 自動修正要靠旁邊的字組成詞（s3u + cl3 → 你好）。刪掉「好」之後證據不足，s3u 變回原樣，再退格整串刪掉。
+    #expect(type("s3ucl3", composer: &composer).marked == "你你好")
     #expect(composer.handle(.backspace).marked == "你s3u")
     #expect(composer.handle(.backspace).marked == "你")
-    // 漏按聲調：刪掉後面的字就回到「打到一半的音節」，補上聲調即可，不必重打。
-    #expect(type("sucl3", composer: &composer).marked == "你su好")
-    #expect(composer.handle(.backspace).marked == "你ㄋㄧ")
+    // 漏按聲調、後面又還沒打完：顯示成打到一半的音節，補上聲調即可。
+    #expect(type("su", composer: &composer).marked == "你ㄋㄧ")
     #expect(type("3", composer: &composer).marked == "你你")
     _ = composer.handle(.escape)
     // 英文字照一般習慣一次刪一個字母，詞表沒收的也是。

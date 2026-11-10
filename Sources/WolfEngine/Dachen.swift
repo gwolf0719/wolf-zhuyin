@@ -40,6 +40,41 @@ public enum Dachen {
         return (reading + tone, position + 1)
     }
 
+    /// 鍵盤上相鄰的鍵（同一排左右，以及上下排斜對的兩個）。
+    static let neighbors: [Character: [Character]] = {
+        let rows = ["1234567890-", "qwertyuiop", "asdfghjkl;", "zxcvbnm,./"].map(Array.init)
+        var map: [Character: [Character]] = [:]
+        func link(_ a: Character, _ b: Character) {
+            map[a, default: []].append(b)
+            map[b, default: []].append(a)
+        }
+        for (rowIndex, row) in rows.enumerated() {
+            for (column, key) in row.enumerated() {
+                if column + 1 < row.count { link(key, row[column + 1]) }
+                // 每一排比上一排往右錯開半個鍵：q 在 1 和 2 的下方。
+                if rowIndex > 0 {
+                    let above = rows[rowIndex - 1]
+                    for aboveColumn in [column, column + 1] where aboveColumn < above.count { link(key, above[aboveColumn]) }
+                }
+            }
+        }
+        return map
+    }()
+
+    /// 一組按鍵若是「聲母、介音、韻母各至多一個，加上剛好一個聲調」，不管順序，回傳音節讀音。
+    static func syllable(fromUnordered keys: ArraySlice<Character>) -> String? {
+        var consonant: Character?, medial: Character?, rime: Character?, tone: String?
+        for key in keys {
+            if let symbol = consonants[key], consonant == nil { consonant = symbol }
+            else if let symbol = medials[key], medial == nil { medial = symbol }
+            else if let symbol = rimes[key], rime == nil { rime = symbol }
+            else if let mark = tones[key], tone == nil { tone = mark }
+            else { return nil }
+        }
+        guard let tone, consonant != nil || medial != nil || rime != nil else { return nil }
+        return String([consonant, medial, rime].compactMap { $0 }) + tone
+    }
+
     static func isSymbolKey(_ key: Character) -> Bool {
         consonants[key] != nil || medials[key] != nil || rimes[key] != nil
     }

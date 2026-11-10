@@ -1,0 +1,10 @@
+# 詞表多半沒收的英文詞：開啟打錯容錯後，這些字不可以被「修正」成中文。
+github gitlab kubernetes docker async await deploy npm pnpm webpack vite nextjs react vue svelte
+typescript javascript golang rustc pytest numpy pandas pytorch tensorflow openai chatgpt claude gemini
+macbook iphone ipad airpods wifi bluetooth usb hdmi ssd cpu gpu ram json yaml toml csv sql nosql redis
+postgres mongodb mysql sqlite nginx apache linux ubuntu debian macos ios android xcode vscode vim emacs
+figma notion slack discord zoom youtube netflix spotify instagram facebook twitter tiktok line
+oauth jwt api sdk cli gui url uri http https ssh ftp dns tcp udp ip vpn cdn
+frontend backend fullstack devops refactor debug hotfix rollback changelog readme todo fixme
+blog vlog podcast emoji gif meme lol omg btw fyi asap imo idk tbh brb
+mp3 mp4 h264 utf8 k8s ipv6 ipv4 s3 es6 web3 v2 v3 x86 arm64 i18n a11y p2p b2b 3d 4k 5g m1 m2 m3 m4 gpt4 win11 ps5 u3 e3

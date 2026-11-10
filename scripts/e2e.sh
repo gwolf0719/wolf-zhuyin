@@ -22,7 +22,9 @@ run 'su3cl' '你ㄏㄠ'
 run 'y94{down}1' '在'
 run 'su3cl3\4' '你好？'
 run 'ji3y94ru8 {left}{down}1{enter}' '我在家'
-run 'su3cl3s3u{delete}{enter}' '你好'
+run 'su3cl3q3w{delete}{enter}' '你好'
+run 's3ucl3{enter}' '你好'
+run 'ji3m/4npm{enter}' '我用npm'
 run 'C:\\Users{enter}' 'C:\Users'
 
 if [[ $failed -gt 0 ]]; then
