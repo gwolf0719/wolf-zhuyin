@@ -104,3 +104,33 @@ func languageAccuracyDoesNotRegress(path: String, threshold: Double) throws {
     #expect(candidates.contains { $0.start == 4 })
     #expect(segmenter.candidates("hello").isEmpty)
 }
+
+/// 打字途中不可以把已經顯示的中文改回英文，或反過來。
+@Test func typingDoesNotFlipEarlierText() {
+    let evaluation = Evaluation(segmenter: segmenter)
+    func steps(_ text: String) -> [String] { evaluation.stability(text)!.steps }
+    // 「因」打出來之後，接著打下一個字的注音不會讓它變回 up。
+    #expect(steps("因為他不在")[3] == "因ㄨ")
+    // 開頭的 a、up 剛好是英文字：先顯示注音，不先顯示英文。
+    #expect(steps("明天")[0...2] == ["ㄇ", "ㄇㄧ", "ㄇㄧㄥ"])
+    #expect(steps("因為")[0...1] == ["ㄧ", "ㄧㄣ"])
+    // 數字、大寫縮寫後面接中文：照樣顯示注音。
+    #expect(steps("總共100元").contains("總共100ㄩㄢ"))
+    #expect(steps("OK我知道了").contains("OKㄨㄛ"))
+    // 英文字還沒打完時照字母顯示，不閃注音（hel 是 hello 的開頭）。
+    #expect(steps("hello world").prefix(5) == ["ㄘ", "he", "hel", "hell", "hello"])
+    #expect(steps("我用Mac打字").contains("我用Macㄉ"))
+}
+
+/// 評測集一鍵一鍵打，途中改判的句子不可以變多。門檻隨實測結果往下調。
+@Test func typingStabilityDoesNotRegress() throws {
+    let evaluation = Evaluation(segmenter: segmenter)
+    var unstable = 0
+    for path in ["Eval/dev.txt", "Eval/test.txt"] {
+        let content = try String(contentsOf: repositoryRoot.appendingPathComponent(path), encoding: .utf8)
+        for line in content.split(separator: "\n") where !line.hasPrefix("#") {
+            if let result = evaluation.stability(String(line)), !result.flips.isEmpty { unstable += 1 }
+        }
+    }
+    #expect(unstable <= 4)
+}

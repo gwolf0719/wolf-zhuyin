@@ -7,12 +7,28 @@ public struct EnglishWords: Sendable {
 
     private let common: Set<String>
     private let dictionary: Set<String>
+    /// 常用字排好序，查「是不是某個常用字的開頭」用。只用常用字：大詞表冷僻字太多（soj → sojourn），
+    /// 會把「英文字後面緊接著打注音」誤當成英文還沒打完。
+    private let sorted: [String]
 
     public init(dictionaryURL: URL = URL(fileURLWithPath: "/usr/share/dict/words")) {
         common = Set(Self.commonWords.split(whereSeparator: \.isWhitespace).map(String.init))
         let content = (try? String(contentsOf: dictionaryURL, encoding: .utf8)) ?? ""
         // 系統詞表收了大量冷僻的一、二字母「單字」，只會製造誤判，所以只取 3 個字母以上。
         dictionary = Set(content.split(separator: "\n").lazy.filter { $0.count >= 3 }.map { $0.lowercased() })
+        sorted = common.sorted()
+    }
+
+    /// 這串字母是不是英文字，或某個常用英文字的開頭（不分大小寫）。用來判斷英文字是不是還在打。
+    public func isWordOrPrefix(_ prefix: String) -> Bool {
+        let lowered = prefix.lowercased()
+        if tier(of: lowered) != nil { return true }
+        var low = 0, high = sorted.count
+        while low < high {
+            let middle = (low + high) / 2
+            if sorted[middle] < lowered { low = middle + 1 } else { high = middle }
+        }
+        return low < sorted.count && sorted[low].hasPrefix(lowered)
     }
 
     public func tier(of word: String) -> Tier? {
@@ -40,5 +56,8 @@ public struct EnglishWords: Sendable {
     under into down should must may might does doing going being having said says made maybe really
     people person thing things something anything nothing everything someone everyone
     mp3 mp4 m4a h264 h265 x86 x64 arm64 ipv4 ipv6 p2p b2b b2c
+    github gitlab google youtube facebook instagram iphone ipad macbook windows linux android
+    debug config docs readme json yaml html css javascript typescript python swift docker
+    taipei costco
     """
 }

@@ -71,6 +71,29 @@ case "eval":
     print("中英判斷全對 \(languageCorrect)/\(total)（\(percent(languageCorrect))）")
     print("文字完全相同 \(textCorrect)/\(total)（\(percent(textCorrect))）")
 
+case "steps":
+    // 一鍵一鍵打一句話，印出每一步組字區的樣子。
+    guard let result = evaluation.stability(arguments[1]) else { exit(1) }
+    print(result.steps.joined(separator: " | "))
+
+case "stability":
+    // 一鍵一鍵打評測句，列出已顯示的中文或英文後來又被改判的情況。
+    var total = 0, unstable = 0
+    for path in arguments.dropFirst() {
+        guard let content = try? String(contentsOfFile: path, encoding: .utf8) else { exit(1) }
+        for line in content.split(separator: "\n") where !line.hasPrefix("#") {
+            guard let result = evaluation.stability(String(line)) else { continue }
+            total += 1
+            guard !result.flips.isEmpty else { continue }
+            unstable += 1
+            print("\(line)（按鍵 \(result.keys)）")
+            for step in Set(result.flips.map(\.step)).sorted() {
+                print("    第 \(step) 鍵：\(result.steps[max(step - 2, 0)]) → \(result.steps[step - 1])")
+            }
+        }
+    }
+    print("----\n句數 \(total)，打字途中有改判的 \(unstable) 句")
+
 default:
     print(usage)
     exit(2)

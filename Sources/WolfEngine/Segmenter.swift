@@ -350,7 +350,18 @@ public struct Segmenter: Sendable {
 
     func pieces(_ keys: [Character], afterChinese: Bool, showPending: Bool) -> [Piece] {
         guard !keys.isEmpty else { return [] }
+        if showPending, let pending = pendingSyllable(in: keys) {
+            // 結尾是打到一半的音節：前面的部分單獨轉換（不讓還沒打完的按鍵影響前面的判斷），結尾顯示注音符號。
+            var result = resolve(pending.head, afterChinese: afterChinese)
+            result.append(Piece(language: .chinese, keys: pending.start..<keys.count, text: pending.symbols, isPending: true))
+            return result
+        }
+        return resolve(bestPath(keys), afterChinese: afterChinese)
+    }
 
+    /// 整串按鍵分數最高的解讀。
+    private func bestPath(_ keys: [Character]) -> [Edge] {
+        guard !keys.isEmpty else { return [] }
         // 狀態＝（最後一條邊的語言, 最後一個字）。記最後一個字是為了算前後字搭配：
         // 「明天」後面接「再」或「在」，分數不同。每個位置只有幾條邊結束，狀態數量很小。
         struct State: Hashable {
@@ -415,14 +426,7 @@ public struct Segmenter: Sendable {
         }
         path.reverse()
 
-        if showPending, let pending = pendingSyllable(in: keys, path: path) {
-            // 結尾是打到一半的音節：前面照常處理，結尾顯示注音符號。
-            let head = Array(path.prefix { $0.start < pending.start })
-            var result = resolve(head, afterChinese: afterChinese)
-            result.append(Piece(language: .chinese, keys: pending.start..<keys.count, text: pending.symbols, isPending: true))
-            return result
-        }
-        return resolve(path, afterChinese: afterChinese)
+        return path
     }
 
     private func resolve(_ path: [Edge], afterChinese: Bool) -> [Piece] {
@@ -440,25 +444,31 @@ public struct Segmenter: Sendable {
         }
     }
 
-    /// 結尾若是「還沒按聲調、但確實是某個音節開頭」的 1–3 個鍵，回傳它的起點與注音符號。
-    /// 只在這幾個鍵前面不是其他零散英數字時成立，所以打 abc 不會變成 abㄏ。
-    private func pendingSyllable(in keys: [Character], path: [Edge]) -> (start: Int, symbols: String)? {
-        var count = 0
-        for edge in path.reversed() {
-            guard edge.end - edge.start == 1, edge.isRawKey || edge.punctuation != nil,
-                  Dachen.isSymbolKey(keys[edge.start]) else { break }
-            count += 1
+    /// 結尾若是「還沒按聲調、但確實是某個音節開頭」的 1–3 個鍵，回傳它的起點、注音符號，以及前面那段的解讀。
+    /// 取最長的那種：打 a、up、go 的當下先顯示成 ㄇ、ㄧㄣ、ㄕㄟ，等下一鍵再決定，不會先顯示英文再跳成中文。
+    /// 前面緊接著零散的英文字母時不算（打 abc 不會變成 abㄏ）。
+    private func pendingSyllable(in keys: [Character]) -> (start: Int, symbols: String, head: [Edge])? {
+        for count in stride(from: min(3, keys.count), through: 1, by: -1) {
+            let start = keys.count - count
+            let tail = keys[start...]
+            guard tail.allSatisfy(Dachen.isSymbolKey) else { continue }
+            // 單獨一個標點鍵（, . ;）就是標點，不當成韻母。
+            if count == 1, Self.fullWidthPunctuation[keys[start]] != nil { continue }
+            guard let symbols = Dachen.symbols(for: tail), lexicon.syllablePrefixes.contains(symbols) else { continue }
+            let head = bestPath(Array(keys[..<start]))
+            // 前面緊接著零散的英數字：純數字（100元）或兩個以上大寫字母的縮寫（OK、AI）可以接注音，
+            // 其他（abc、Gi）多半是詞表沒收的英文字還沒打完，不顯示注音，免得每打一個字母就閃一下。
+            let run = head.reversed().prefix { $0.isRawKey && keys[$0.start].isASCII && (keys[$0.start].isLetter || keys[$0.start].isNumber) }
+                .map { keys[$0.start] }
+            if !run.isEmpty, !run.allSatisfy(\.isNumber), !(run.count >= 2 && run.allSatisfy(\.isUppercase)) { continue }
+            // 緊接在英文字母後面、合起來是英文字或英文字的開頭（hel → hello）：多半是英文還沒打完，照字母顯示。
+            if start > 0, keys[start - 1].isASCIILetter, tail.allSatisfy(\.isASCIILetter) {
+                let letters = String(keys[..<start].reversed().prefix(while: \.isASCIILetter).reversed()) + String(tail)
+                if english.isWordOrPrefix(letters) { continue }
+            }
+            return (start, symbols, head)
         }
-        guard (1...3).contains(count) else { return nil }
-        let start = keys.count - count
-        // 單獨一個標點鍵（, . ;）就是標點，不當成韻母。
-        if count == 1, Self.fullWidthPunctuation[keys[start]] != nil { return nil }
-        if start > 0, let previous = path.last(where: { $0.end == start }),
-           previous.isRawKey, keys[start - 1].isASCII, keys[start - 1].isLetter || keys[start - 1].isNumber {
-            return nil
-        }
-        guard let symbols = Dachen.symbols(for: keys[start...]), lexicon.syllablePrefixes.contains(symbols) else { return nil }
-        return (start, symbols)
+        return nil
     }
 
     /// 決定路徑上每個標點用全形（true）還是半形。

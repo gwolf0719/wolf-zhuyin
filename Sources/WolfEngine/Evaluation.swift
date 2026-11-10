@@ -81,4 +81,36 @@ public struct Evaluation: Sendable {
             languageCorrect: isChinese == typed.isChinese
         )
     }
+
+    /// 打字過程的穩定度：一鍵一鍵打的時候，已經顯示成完整中文字或英文的按鍵，後來又被改判成另一種語言幾次。
+    /// 打到一半、顯示成注音符號的不算（那本來就還沒定）。
+    public struct Stability: Sendable {
+        public let keys: String
+        /// 每一步組字區顯示的文字。
+        public let steps: [String]
+        /// 改判的次數，以及每次是在打第幾鍵時、哪個按鍵。
+        public let flips: [(step: Int, key: Int, toChinese: Bool)]
+    }
+
+    public func stability(_ expected: String) -> Stability? {
+        guard let typed = type(expected) else { return nil }
+        let keys = Array(typed.keys)
+        var last: [Bool?] = Array(repeating: nil, count: keys.count)
+        var steps: [String] = []
+        var flips: [(step: Int, key: Int, toChinese: Bool)] = []
+        for length in 1...keys.count {
+            let pieces = segmenter.pieces(Array(keys[..<length]), afterChinese: true, showPending: true)
+            steps.append(pieces.map(\.text).joined())
+            for piece in pieces where !piece.isPending {
+                // 標點、空白不算語言判斷；只看中文字和英數字。
+                guard piece.reading != nil || piece.text.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { continue }
+                let isChinese = piece.language == .chinese
+                for key in piece.keys {
+                    if let previous = last[key], previous != isChinese { flips.append((length, key, isChinese)) }
+                    last[key] = isChinese
+                }
+            }
+        }
+        return Stability(keys: typed.keys, steps: steps, flips: flips)
+    }
 }
