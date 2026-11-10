@@ -86,7 +86,12 @@ public struct Composer: Sendable {
     ]
 
     private let segmenter: Segmenter
-    private var keys: [Character] = []
+    private var keys: [Character] = [] {
+        didSet { if notes.count != keys.count { notes = Array(notes.prefix(keys.count)) + Array(repeating: nil, count: max(0, keys.count - notes.count)) } }
+    }
+    /// 和 `keys` 一一對應：從選字窗選定的中文字記下它的讀音（一個字一個音節），
+    /// 之後再按 ↓ 還能用讀音重新選字。其他按鍵是 nil。
+    private var notes: [String?] = []
     /// 游標在 `keys` 的哪個位置（0...keys.count）。
     private var cursor = 0
     /// 上一次送出的文字是否以中文結尾；決定下一段開頭的標點用全形還是半形。
@@ -109,6 +114,11 @@ public struct Composer: Sendable {
     }
 
     private var beforeCursor: String { String(keys[..<cursor]) }
+
+    /// 選定的中文字的讀音（按鍵位置 → 讀音）。
+    private var readings: [Int: String] {
+        Dictionary(uniqueKeysWithValues: notes.enumerated().compactMap { index, note in note.map { (index, $0) } })
+    }
 
     /// 目前畫面該有的樣子。
     private func state(handled: Bool = true) -> Result {
@@ -155,6 +165,7 @@ public struct Composer: Sendable {
         guard let commitStop else { return state() }
         let committed = String(characters[..<commitStop.offset])
         record(String(keys[..<commitStop.key]))
+        notes.removeFirst(commitStop.key)
         keys.removeFirst(commitStop.key)
         cursor = keys.count
         afterChinese = true
@@ -266,6 +277,7 @@ public struct Composer: Sendable {
         case .character(let character):
             // 沒在組字時，空白就是空白。
             if keys.isEmpty, character == " " { return Result(handled: false) }
+            notes.insert(nil, at: cursor)
             keys.insert(character, at: cursor)
             cursor += 1
             observeRetyped(character)
@@ -300,6 +312,7 @@ public struct Composer: Sendable {
                 ? min(cursor, max(1, segmenter.backspaceLength(beforeCursor, afterChinese: afterChinese)))
                 : cursor - segmenter.unitStart(String(keys), before: cursor, afterChinese: afterChinese)
             let removed = Array(keys[cursor - length..<cursor])
+            notes.removeSubrange(cursor - length..<cursor)
             keys.removeSubrange(cursor - length..<cursor)
             cursor -= length
             if !removed.allSatisfy(\.isASCII) {
@@ -318,7 +331,7 @@ public struct Composer: Sendable {
             return state()
         case .down:
             guard !keys.isEmpty else { return Result(handled: false) }
-            let candidates = segmenter.candidates(String(keys), cursor: cursor, afterChinese: afterChinese)
+            let candidates = segmenter.candidates(String(keys), cursor: cursor, afterChinese: afterChinese, readings: readings)
             if !candidates.isEmpty {
                 panel = Panel(items: candidates.map {
                     Item(text: $0.text, start: $0.start, reading: $0.reading, inserted: $0.inserted)
@@ -383,6 +396,11 @@ public struct Composer: Sendable {
             // 選定的文字直接寫進緩衝，取代原本那幾個按鍵；之後不再被重新轉換。
             learn(chosen, after: String(keys[..<chosen.start]))
             let inserted = Array(chosen.separator + (chosen.inserted ?? chosen.text))
+            // 中文候選一個字對一個音節時，記下每個字的讀音。
+            let syllables = chosen.reading?.split(separator: "-").map(String.init) ?? []
+            let newNotes: [String?] = chosen.separator.isEmpty && syllables.count == inserted.count
+                ? syllables : Array(repeating: nil, count: inserted.count)
+            notes.replaceSubrange(chosen.start..<cursor, with: newNotes)
             keys.replaceSubrange(chosen.start..<cursor, with: inserted)
             cursor = chosen.start + inserted.count
             panel = nil

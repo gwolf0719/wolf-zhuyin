@@ -600,3 +600,36 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     let forced = composer.handle(.down)
     #expect(forced.candidates.contains("ㄙㄣㄩ"))
 }
+
+/// 選過的字可以再改：再按 ↓ 照樣列出候選，也能切成英文、再切回中文。
+@Test func chosenTextCanBeChangedAgain() {
+    var composer = Composer(segmenter: segmenter)
+    _ = type("y94", composer: &composer)
+    var panel = composer.handle(.down)
+    let first = panel.candidates[1]
+    #expect(composer.handle(.character("2")).marked == first)
+    // 第二次：游標還在這個字後面，↓ 照樣有候選。
+    panel = composer.handle(.down)
+    #expect(panel.candidates.contains("在"))
+    #expect(composer.handle(.character(Character("\(panel.candidates.firstIndex(of: "在")! + 1)"))).marked == "在")
+
+    // 兩個字的詞選過之後，也能只改其中一個字，或整個詞再換。
+    _ = composer.handle(.escape)
+    _ = type("vu,4vu,7", composer: &composer)
+    _ = composer.handle(.down)
+    #expect(composer.handle(.character("1")).marked == "謝謝")
+    panel = composer.handle(.down)
+    #expect(panel.candidates.first == "謝謝")
+
+    // 切成英文之後，再按 ↓ 可以切回中文。（第一次 Esc 關選字窗，第二次清掉組字區）
+    _ = composer.handle(.escape)
+    _ = composer.handle(.escape)
+    _ = type("su3", composer: &composer)
+    _ = composer.handle(.down)
+    #expect(composer.handle(.character("8")).marked == "su3")
+    panel = composer.handle(.down)
+    #expect(panel.candidates.contains("你"))
+    #expect(composer.handle(.character(Character("\(panel.candidates.firstIndex(of: "你")! + 1)"))).marked == "你")
+    // 強制轉回中文的字一樣可以再選。
+    #expect(composer.handle(.down).candidates.contains("妳"))
+}

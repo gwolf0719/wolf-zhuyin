@@ -212,12 +212,18 @@ public struct Segmenter: Sendable {
     /// 音節邊界取自整段的轉換結果，而不是只看游標前那一截重新判斷——
     /// 否則游標在中間時，被修正過或靠後文成詞的字會被切錯。
     /// - Parameter cursor: 游標在按鍵中的位置；nil 表示結尾。
-    public func candidates(_ input: String, cursor: Int? = nil, afterChinese: Bool = true) -> [Candidate] {
+    /// - Parameter readings: 緩衝裡選定的中文字的讀音（按鍵位置 → 單一音節），讓選過的字可以再選一次。
+    public func candidates(_ input: String, cursor: Int? = nil, afterChinese: Bool = true, readings: [Int: String] = [:]) -> [Candidate] {
         let keys = Array(input)
         let cursor = cursor ?? keys.count
         // 把整段的中文詞拆回音節，分成一串串連續的中文。
         var runs: [[(reading: String, start: Int, end: Int)]] = [[]]
         for piece in pieces(keys, afterChinese: afterChinese, showPending: false) {
+            // 選定過的字：照記下的讀音當成一個音節，和旁邊的字接成一串。
+            if piece.reading == nil, piece.keys.count == 1, let reading = readings[piece.keys.lowerBound] {
+                runs[runs.count - 1].append((reading, piece.keys.lowerBound, piece.keys.upperBound))
+                continue
+            }
             guard let reading = piece.reading else {
                 runs.append([])
                 continue
@@ -243,11 +249,13 @@ public struct Segmenter: Sendable {
         }
         // 切換語言：游標前面那個字照打的按鍵（英文），以及它的注音符號。
         let syllable = run[last]
-        let typed = String(keys[syllable.start..<syllable.end])
-        let switches = [
-            Candidate(text: typed, start: syllable.start, reading: nil, inserted: String(typed.map(Self.literal))),
+        // 選定過的字沒有原本的按鍵，用讀音推回標準按法。
+        let span = keys[syllable.start..<syllable.end]
+        let typed = span.allSatisfy(\.isASCII) ? String(span) : Dachen.keys(forReading: syllable.reading)
+        let switches = ([
+            typed.map { Candidate(text: $0, start: syllable.start, reading: nil, inserted: String($0.map(Self.literal))) },
             Candidate(text: syllable.reading, start: syllable.start, reading: nil),
-        ].filter { seen.insert($0.text).inserted }
+        ] as [Candidate?]).compactMap { $0 }.filter { seen.insert($0.text).inserted }
         result.insert(contentsOf: switches, at: min(result.count, Self.languageSwitchSlot))
         return result
     }
@@ -258,19 +266,27 @@ public struct Segmenter: Sendable {
         let all = pieces(keys, afterChinese: afterChinese, showPending: false)
         guard let end = all.lastIndex(where: { $0.keys.upperBound == cursor }) else { return [] }
         var start = cursor
+        // 之前手動切成英文的（私用區字元）也算，讓它可以再切回中文。
+        func typedKey(_ index: Int) -> Character? {
+            let key = Self.decodedLiteral(keys[index]) ?? keys[index]
+            return key.isASCII && key != " " ? key : nil
+        }
         for piece in all[...end].reversed() {
-            let isTyped = piece.reading == nil && piece.keys.allSatisfy { keys[$0].isASCII && keys[$0] != " " }
-            guard isTyped else { break }
+            guard piece.reading == nil, piece.keys.allSatisfy({ typedKey($0) != nil }) else { break }
             start = piece.keys.lowerBound
         }
         guard start < cursor else { return [] }
-        let span = keys[start..<cursor]
+        let span = keys[start..<cursor].map { Self.decodedLiteral($0) ?? $0 }[...]
         var result: [Candidate] = []
         var chinese = self
         chinese.englishEnabled = false
-        let forced = chinese.segment(String(span), afterChinese: afterChinese).map(\.text).joined()
+        let forcedPieces = chinese.pieces(Array(span), afterChinese: afterChinese, showPending: false)
+        let forced = forcedPieces.map(\.text).joined()
         if forced.contains(where: { !$0.isASCII && $0.isLetter }) {
-            result.append(Candidate(text: forced, start: start, reading: nil))
+            // 整段都轉成中文時帶上讀音，選了之後還能再選字。
+            let readings = forcedPieces.compactMap(\.reading)
+            let reading = readings.count == forcedPieces.count ? readings.joined(separator: "-") : nil
+            result.append(Candidate(text: forced, start: start, reading: reading))
         }
         if let symbols = Dachen.symbolsByKey(span) {
             result.append(Candidate(text: symbols, start: start, reading: nil))
