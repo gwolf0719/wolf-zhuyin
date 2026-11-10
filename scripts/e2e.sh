@@ -28,6 +28,7 @@ run 'ji3y94ru8 {left}{down}1{enter}' '我在家'
 run 'su3cl3q3w{delete}{enter}' '你好'
 run 's3ucl3{enter}' '你好'
 run 'ji3m/4npm{enter}' '我用npm'
+run 'yj/3ej/4100m06{enter}' '總共100元'
 run 'C:\\Users{enter}' 'C:\Users'
 
 if [[ $failed -gt 0 ]]; then

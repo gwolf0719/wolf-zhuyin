@@ -14,6 +14,8 @@ public struct Segmenter: Sendable {
     public struct Weights: Sendable {
         /// 常用英文字。
         public var commonWord = -3.5
+        /// 常用表裡夾數字的字（mp4、x86）：字母夾數字幾乎不會是打錯的注音，證據比一般英文字強。
+        public var alphanumericWord = -2.0
         /// 只在大詞表裡的英文字。
         public var dictionaryWord = -5.0
         /// 無法解讀、原樣輸出的單一按鍵。
@@ -38,6 +40,14 @@ public struct Segmenter: Sendable {
         public var typoMinWordScore = -6.0
         /// 中英切換一次的代價。
         public var languageSwitch = -1.0
+        /// 每多一個中文詞的代價：讓「再說」這種完整的詞贏過拆開的「在＋說」。
+        public var chineseWord = -0.5
+        /// 前後字搭配分數的倍數；0 表示不看上下文。
+        public var context = 1.0
+        /// 同一個讀音最多拿幾個同音詞去比上下文。
+        public var homophones = 4
+        /// 分數比最常見的同音詞低超過這麼多的，不拿來比上下文。
+        public var homophoneMargin = 3.0
         public init() {}
     }
 
@@ -52,6 +62,8 @@ public struct Segmenter: Sendable {
     public var autoSpace = false
     public let english: EnglishWords
     public var weights = Weights()
+    /// 同音字依上下文挑選的規則。
+    public var context = CharacterContext()
 
     public init(lexicon: Lexicon, english: EnglishWords = EnglishWords()) {
         self.lexicon = lexicon
@@ -339,38 +351,66 @@ public struct Segmenter: Sendable {
     func pieces(_ keys: [Character], afterChinese: Bool, showPending: Bool) -> [Piece] {
         guard !keys.isEmpty else { return [] }
 
-        // best[位置][語言]：走到該位置、最後一條邊是該語言時的最高分。
-        let languages: [Language] = [.chinese, .english]
-        var best = Array(repeating: [Double](repeating: -.infinity, count: 2), count: keys.count + 1)
-        var back = Array(repeating: [(edge: Edge, previous: Int)?](repeating: nil, count: 2), count: keys.count + 1)
-        best[0] = [0, 0]
+        // 狀態＝（最後一條邊的語言, 最後一個字）。記最後一個字是為了算前後字搭配：
+        // 「明天」後面接「再」或「在」，分數不同。每個位置只有幾條邊結束，狀態數量很小。
+        struct State: Hashable {
+            let language: Language
+            let last: Character
+        }
+        typealias Entry = (score: Double, edge: Edge?, previous: State?)
+        let context = self.context
+        let contextWeight = weights.context
+        func contextScore(_ previous: Character, _ next: Character) -> Double {
+            contextWeight == 0 ? 0 : contextWeight * context.score(previous, next)
+        }
+        /// 走過這條邊之後，下一個字看到的「前一個字」。
+        func lastCharacter(after edge: Edge) -> Character {
+            if edge.punctuation != nil { return CharacterContext.sentenceStart }
+            guard let last = edge.text.last else { return CharacterContext.sentenceStart }
+            if edge.language == .chinese { return last }
+            if last.isNumber { return CharacterContext.afterNumber }
+            if last.isLetter { return CharacterContext.afterLatin }
+            return CharacterContext.sentenceStart
+        }
+        var best = Array(repeating: [State: Entry](), count: keys.count + 1)
+        for language in [Language.chinese, .english] {
+            best[0][State(language: language, last: CharacterContext.sentenceStart)] = (0, nil, nil)
+        }
 
-        for position in 0..<keys.count {
+        for position in 0..<keys.count where !best[position].isEmpty {
             for edge in edges(in: keys, from: position) {
-                let to = edge.language == .chinese ? 0 : 1
-                for from in 0..<2 where best[position][from] > -.infinity {
+                for (state, entry) in best[position] {
                     // 修正打錯的邊只能出現在中文語境：開頭、中文後面，或空白與標點後面。
                     // 緊接在英數字後面的不修，避免把英文字的後半段改成中文。
-                    if edge.isCorrection, position > 0, languages[from] == .english,
+                    if edge.isCorrection, position > 0, state.language == .english,
                        keys[position - 1].isLetter || keys[position - 1].isNumber { continue }
                     // 標點邊維持前一個語言狀態，不算切換。
-                    if edge.punctuation != nil, languages[from] != edge.language { continue }
-                    let switched = position > 0 && languages[from] != edge.language
-                    let score = best[position][from] + edge.score + (switched ? weights.languageSwitch : 0)
-                    if score > best[edge.end][to] {
-                        best[edge.end][to] = score
-                        back[edge.end][to] = (edge, from)
+                    if edge.punctuation != nil, state.language != edge.language { continue }
+                    let switched = position > 0 && state.language != edge.language
+                    var score = entry.score + edge.score + (switched ? weights.languageSwitch : 0)
+                    if edge.language == .chinese, edge.punctuation == nil, let first = edge.text.first {
+                        score += contextScore(state.last, first)
+                    } else if edge.punctuation != nil, state.language == .chinese {
+                        score += contextScore(state.last, CharacterContext.sentenceEnd)
+                    }
+                    let next = State(language: edge.language, last: lastCharacter(after: edge))
+                    if score > best[edge.end][next]?.score ?? -.infinity {
+                        best[edge.end][next] = (score, edge, state)
                     }
                 }
             }
         }
 
+        // 結尾：中文字收尾時也算一次「句子結束」的搭配（他不「在」比他不「再」常收尾）。
+        func finalScore(_ state: State, _ entry: Entry) -> Double {
+            entry.score + (state.language == .chinese ? contextScore(state.last, CharacterContext.sentenceEnd) : 0)
+        }
         var path: [Edge] = []
         var position = keys.count
-        var state = best[position][0] >= best[position][1] ? 0 : 1
-        while position > 0, let step = back[position][state] {
-            path.append(step.edge)
-            position = step.edge.start
+        var state = best[position].max { finalScore($0.key, $0.value) < finalScore($1.key, $1.value) }?.key
+        while position > 0, let current = state, let step = best[position][current], let edge = step.edge {
+            path.append(edge)
+            position = edge.start
             state = step.previous
         }
         path.reverse()
@@ -504,11 +544,19 @@ public struct Segmenter: Sendable {
                     // 但兩種修正都算「修正」，一樣不可以緊接在英數字後面（在 pieces 的動態規劃裡檢查）。
                     if let entry = entries(for: next.reading).first,
                        !next.isGuess || (next.ends.count >= 2 && entry.score >= weights.typoMinWordScore) {
-                        result.append(Edge(
-                            start: start, end: option.end, language: .chinese, text: entry.text,
-                            score: entry.score + next.penalty, reading: next.reading,
-                            syllableEnds: next.ends, isCorrection: next.penalty < 0
-                        ))
+                        // 最常見的同音詞之外，也帶上幾個分數相近的，讓上下文去挑。
+                        // 使用者自己選過的詞優先，那時不再讓上下文改掉。
+                        let isLearned = userPhrases?.texts(for: next.reading).isEmpty == false
+                        let homophones = isLearned || weights.context == 0
+                            ? [entry]
+                            : entries(for: next.reading).prefix(weights.homophones).filter { entry.score - $0.score <= weights.homophoneMargin }
+                        for homophone in homophones {
+                            result.append(Edge(
+                                start: start, end: option.end, language: .chinese, text: homophone.text,
+                                score: homophone.score + next.penalty + weights.chineseWord, reading: next.reading,
+                                syllableEnds: next.ends, isCorrection: next.penalty < 0
+                            ))
+                        }
                     }
                 }
             }
@@ -517,13 +565,15 @@ public struct Segmenter: Sendable {
 
         // 英文詞：必須從字母串的開頭起算，避免從音節中間認出英文字（如「今」rup 裡的 up）。
         // 結尾不限，因為英文後面可以直接接中文（code + ji3）。
-        if start == 0 || !keys[start - 1].isASCIILetter {
+        // 中間可以有數字（mp4、x86），但要從字母開始；這類字只有收在常用表裡的才認得。
+        if keys[start].isASCIILetter, start == 0 || !keys[start - 1].isASCIILetter {
             var end = start
-            while end < keys.count, keys[end].isASCIILetter {
+            while end < keys.count, keys[end].isASCIILetter || keys[end].isASCIIDigit {
                 end += 1
                 let word = String(keys[start..<end])
                 guard let tier = english.tier(of: word) else { continue }
-                let score = tier == .common ? weights.commonWord : weights.dictionaryWord
+                let score = word.contains(where: \.isNumber) ? weights.alphanumericWord
+                    : tier == .common ? weights.commonWord : weights.dictionaryWord
                 result.append(Edge(start: start, end: end, language: .english, text: word, score: score))
             }
         }
@@ -610,4 +660,5 @@ extension Segmenter {
 
 private extension Character {
     var isASCIILetter: Bool { isASCII && isLetter }
+    var isASCIIDigit: Bool { isASCII && isNumber }
 }

@@ -36,6 +36,12 @@ private func convert(_ keys: String) -> String {
     ("284e949.52u03", "大概9.5點"),
     ("f(x)2k7", "f(x)的"),
     ("w8 (James)", "他（James）"),
+    // 選字看上下文：數字後面是量詞、句尾是語助詞、完整的詞勝過拆開的單字。
+    ("yj/3ej/4100m06", "總共100元"),
+    ("ji3ap6go18 ", "我們go吧"),
+    ("au/6wu0 y94gji ", "明天再說"),
+    // 常用表裡夾數字的英文字（mp3）不會被當成注音。
+    ("5k4g4mp32;304", "這是mp3檔案"),
 ])
 func convertsKeys(keys: String, expected: String) {
     #expect(convert(keys) == expected)
@@ -72,6 +78,8 @@ func convertsKeys(keys: String, expected: String) {
         total += 1
         // 「. 」「, 」「; 」刻意解讀成標點加空白，不是歐、欸、骯（要打這幾個字靠詞或選字窗）。
         if [". ", ", ", "; "].contains(outcome.keys) { continue }
+        // mp3、mp4 刻意當英文：單獨打「允」「運」很少見，打 mp3、mp4 常見（要打這兩個字靠詞或選字窗）。
+        if ["mp3", "mp4"].contains(outcome.keys) { continue }
         if !outcome.languageCorrect { wrong.append("\(entry.text)(\(outcome.keys))→\(outcome.actual)") }
     }
     #expect(total > 5000)

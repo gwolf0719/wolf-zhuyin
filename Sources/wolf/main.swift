@@ -16,9 +16,13 @@ guard arguments.count >= 2 else {
 }
 
 let lexiconPath = ProcessInfo.processInfo.environment["WOLF_LEXICON"] ?? "Data/mcbopomofo/data.txt"
-let segmenter: Segmenter
+var segmenter: Segmenter
 do {
     segmenter = Segmenter(lexicon: try Lexicon(contentsOf: URL(fileURLWithPath: lexiconPath)))
+    // 調參用：WOLF_WEIGHT_chineseWord=-1、WOLF_WEIGHT_context=0 這類環境變數暫時覆蓋權重。
+    let environment = ProcessInfo.processInfo.environment
+    if let value = environment["WOLF_WEIGHT_chineseWord"].flatMap(Double.init) { segmenter.weights.chineseWord = value }
+    if let value = environment["WOLF_WEIGHT_context"].flatMap(Double.init) { segmenter.weights.context = value }
 } catch {
     FileHandle.standardError.write(Data("讀不到詞庫 \(lexiconPath)：\(error.localizedDescription)\n".utf8))
     exit(1)
