@@ -251,6 +251,28 @@ public struct Segmenter: Sendable {
         guard let last = all.last, !last.isPending, !last.isRawKey, last.text != " ",
               let words = sentences(input, afterChinese: afterChinese).last, let lastWord = words.last,
               last.text.last == lastWord.last else { return [] }
+        return predictions(afterWords: words)
+    }
+
+    /// 送出之後、組字區是空的時候預測接下來的內容：剛送出的結尾是句末標點就預測下一句的開頭，
+    /// 是中文字或英文字就預測它的後續；其他情況（逗號、空白、數字…）不預測。
+    public func predictions(following committed: String) -> [String] {
+        guard let last = committed.last else { return [] }
+        if "。？！?!".contains(last) {
+            return Array((history?.likely(after: [UserHistory.sentenceStart]) ?? []).prefix(9))
+        }
+        let words: [String]
+        if last.isASCII {
+            let word = String(committed.reversed().prefix { $0.isASCII && $0.isLetter }.reversed())
+            words = word.isEmpty ? [] : [word]
+        } else {
+            words = committed.reversed().prefix { !$0.isASCII && $0.isLetter }.reversed().map(String.init)
+        }
+        return words.isEmpty ? [] : predictions(afterWords: words)
+    }
+
+    /// 前文（照順序的詞）之後最可能接什麼。
+    private func predictions(afterWords words: [String]) -> [String] {
         var result = history?.likely(after: words) ?? []
 
         // 結尾連續的中文字：較長的前文比較準，排前面。

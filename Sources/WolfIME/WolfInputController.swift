@@ -8,6 +8,10 @@ import WolfEngine
 final class WolfInputController: IMKInputController {
     private var composer = Preferences(defaults: .standard).composer(lexicon: sharedLexicon, stores: sharedStores)
     private static let noReplacement = NSRange(location: NSNotFound, length: NSNotFound)
+    /// 送出後的預測提示放多久；停太久沒動作就收掉，之後的 Tab 照常交給 app。
+    private static let predictionLifetime: TimeInterval = 8
+    private var predictionExpiry: DispatchWorkItem?
+    private var composerIsIdle = true
 
     override init!(server: IMKServer!, delegate: Any!, client inputClient: Any!) {
         super.init(server: server, delegate: delegate, client: inputClient)
@@ -53,7 +57,24 @@ final class WolfInputController: IMKInputController {
         SettingsWindow.shared.show(checkForUpdates: true)
     }
 
+    /// 除了按鍵，也收滑鼠點擊：點了別的地方，送出後的預測就不算數。
+    override func recognizedEvents(_ sender: Any!) -> Int {
+        Int(NSEvent.EventTypeMask([.keyDown, .leftMouseDown, .rightMouseDown]).rawValue)
+    }
+
+    private func dismissPrediction() {
+        predictionExpiry?.cancel()
+        predictionExpiry = nil
+        composer.dismissPrediction()
+        CandidatePanel.shared.hide()
+    }
+
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
+        if let event, event.type == .leftMouseDown || event.type == .rightMouseDown {
+            // 只在沒有組字時收掉預測；組字中的點擊照系統原本的方式處理。
+            if composerIsIdle { dismissPrediction() }
+            return false
+        }
         guard let event, event.type == .keyDown, let client = sender as? IMKTextInput else {
             debugLog("handle：不是 keyDown 或 client 不支援文字輸入")
             return false
@@ -74,8 +95,16 @@ final class WolfInputController: IMKInputController {
                 replacementRange: Self.noReplacement
             )
         }
+        predictionExpiry?.cancel()
+        predictionExpiry = nil
+        composerIsIdle = result.marked.isEmpty
         if result.candidates.isEmpty, let prediction = result.prediction {
             CandidatePanel.shared.show(prediction: prediction, near: Self.cursorRect(in: client, at: cursorLocation))
+            if result.marked.isEmpty {
+                let expiry = DispatchWorkItem { [weak self] in self?.dismissPrediction() }
+                predictionExpiry = expiry
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.predictionLifetime, execute: expiry)
+            }
         } else if result.candidates.isEmpty {
             CandidatePanel.shared.hide()
         } else {
@@ -88,7 +117,7 @@ final class WolfInputController: IMKInputController {
     }
 
     override func deactivateServer(_ sender: Any!) {
-        CandidatePanel.shared.hide()
+        dismissPrediction()
         super.deactivateServer(sender)
         // 新版已換好、要結束行程換版之前，先等學習紀錄寫完。
         if Updater.pendingRestart { sharedStores.flush() }

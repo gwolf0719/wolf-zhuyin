@@ -26,7 +26,7 @@ private func type(_ keys: String, then last: Composer.Key? = nil, composer: inou
     var composer = Composer(segmenter: segmenter)
     #expect(type("ji3m/4Mac283y4", composer: &composer).marked == "我用Mac打字")
     let result = composer.handle(.enter)
-    #expect(result == Composer.Result(handled: true, commit: "我用Mac打字", marked: ""))
+    #expect(result.handled && result.commit == "我用Mac打字" && result.marked.isEmpty && result.candidates.isEmpty)
 }
 
 @Test func backspaceRemovesOneUnitAndEscapeClears() {
@@ -504,4 +504,70 @@ private func type(_ keys: String, then last: Composer.Key? = nil, composer: inou
 ])
 func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     #expect(UserTypos.looksLikeSameSyllable(Array(mistyped), Array(intended)) == expected)
+}
+
+/// 送出之後組字區是空的：緊接著按 Tab 可以接著打剛才那段的後續。
+@Test func predictionContinuesAfterCommit() {
+    var composer = Composer(segmenter: segmenter)
+    _ = type("1j4cl3", composer: &composer)
+    let committed = composer.handle(.enter)
+    #expect(committed.commit == "不好")
+    #expect(committed.prediction == "意思")
+    let opened = composer.handle(.tab)
+    #expect(opened.candidates.first == "意思")
+    let chosen = composer.handle(.tab)
+    #expect(chosen.marked == "意思")
+    #expect(composer.handle(.enter).commit == "意思")
+}
+
+/// 送出後的預測只給緊接著的那一鍵；之後 Tab 照常交給 app，不會被吃掉。
+@Test func predictionAfterCommitExpires() {
+    var composer = Composer(segmenter: segmenter)
+    _ = type("1j4cl3", then: .enter, composer: &composer)
+    #expect(composer.handle(.left) == Composer.Result(handled: false))
+    #expect(composer.handle(.tab) == Composer.Result(handled: false))
+
+    // 點了別的地方（外殼呼叫 dismissPrediction）也一樣。
+    _ = type("1j4cl3", then: .enter, composer: &composer)
+    composer.dismissPrediction()
+    #expect(composer.handle(.tab) == Composer.Result(handled: false))
+
+    // 焦點離開時送出的內容不預測。
+    _ = type("1j4cl3", composer: &composer)
+    #expect(composer.flush() == "不好")
+    #expect(composer.handle(.tab) == Composer.Result(handled: false))
+
+    // 關掉預測就不提示、不攔。
+    composer.predictionsEnabled = false
+    let committed = type("1j4cl3", then: .enter, composer: &composer)
+    #expect(committed.committed == "不好")
+    #expect(composer.handle(.tab) == Composer.Result(handled: false))
+}
+
+/// 句末標點自動送出之後，預測下一句常用的開頭（來自自己的紀錄）。
+@Test func predictionSuggestsSentenceOpening() {
+    var learning = segmenter
+    learning.history = UserHistory()
+    var composer = Composer(segmenter: learning)
+    // 打過兩句「所以…」開頭的話。
+    for _ in 0..<2 { _ = type("nji3u3ji3m/4", then: .enter, composer: &composer) }
+    #expect(learning.history?.likely(after: [UserHistory.sentenceStart]) == ["所以"])
+    // 句號一出現就送出，接著提示下一句的開頭。
+    var last = Composer.Result(handled: false)
+    for key in "su3cl3?" { last = composer.handle(.character(key)) }
+    #expect(last.commit == "你好？")
+    #expect(last.prediction == "所以")
+    _ = composer.handle(.tab)
+    #expect(composer.handle(.character("1")).marked == "所以")
+}
+
+/// 英文送出後接英文預測，要補上詞間空白。
+@Test func predictionAfterEnglishCommitAddsSpace() {
+    var learning = segmenter
+    learning.history = UserHistory()
+    var composer = Composer(segmenter: learning)
+    for _ in 0..<2 { _ = type("hello world", then: .enter, composer: &composer) }
+    _ = type("hello", then: .enter, composer: &composer)
+    _ = composer.handle(.tab)
+    #expect(composer.handle(.tab).marked == " world")
 }

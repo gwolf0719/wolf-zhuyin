@@ -94,6 +94,9 @@ public struct Composer: Sendable {
     public var predictionsEnabled = true
     /// 剛退格刪掉的按鍵，以及之後在同一個位置重打的按鍵。用來學使用者的打錯習慣。
     private var fix: (deleted: [Character], retyped: [Character], position: Int)?
+    /// 剛送出、組字區已清空時，送出的那段文字；用來預測接下來的內容。按了任何鍵就失效，
+    /// 所以只有「送出後馬上按 Tab」會被攔下來，其他時候 Tab 照常交給 app。
+    private var committedText: String?
 
     public init(segmenter: Segmenter) {
         self.segmenter = segmenter
@@ -123,10 +126,16 @@ public struct Composer: Sendable {
         return result
     }
 
-    /// 游標在結尾、選字窗沒開時才預測。
+    /// 游標在結尾、選字窗沒開時才預測；組字區是空的時候，看剛送出的內容。
     private var currentPredictions: [String] {
-        guard predictionsEnabled, panel == nil, !keys.isEmpty, cursor == keys.count else { return [] }
+        guard predictionsEnabled, panel == nil, cursor == keys.count else { return [] }
+        if keys.isEmpty { return committedText.map { segmenter.predictions(following: $0) } ?? [] }
         return segmenter.predictions(String(keys), afterChinese: afterChinese)
+    }
+
+    /// 不再提示送出後的預測（使用者點了別的地方、或停太久沒動作）。
+    public mutating func dismissPrediction() {
+        committedText = nil
     }
 
     /// 句末標點（。？！）一出現就把到那裡為止的內容送出，後面的留在組字區。
@@ -147,6 +156,7 @@ public struct Composer: Sendable {
         keys.removeFirst(commitStop.key)
         cursor = keys.count
         afterChinese = true
+        if keys.isEmpty { committedText = committed }
         var result = state()
         result.commit = committed
         return result
@@ -214,7 +224,10 @@ public struct Composer: Sendable {
         cursor = 0
         panel = nil
         if let last = text.last { afterChinese = !last.isASCII }
-        return Result(handled: handled, commit: text)
+        committedText = text
+        var result = Result(handled: handled, commit: text)
+        result.prediction = currentPredictions.first
+        return result
     }
 
     /// 把組字中的內容全部送出（焦點離開、切換輸入法時用）。
@@ -223,7 +236,9 @@ public struct Composer: Sendable {
             panel = nil
             return nil
         }
-        return commit(text(of: keys)).commit
+        let text = commit(text(of: keys)).commit
+        committedText = nil
+        return text
     }
 
     public mutating func handle(_ key: Key) -> Result {
@@ -232,6 +247,9 @@ public struct Composer: Sendable {
         case .character, .backspace: break
         default: fix = nil
         }
+        // 送出後的預測只留給緊接著的這一鍵。
+        let lastCommitted = committedText
+        committedText = nil
         if panel != nil {
             fix = nil
             if let result = handleInPanel(key) { return result }
@@ -252,14 +270,17 @@ public struct Composer: Sendable {
             return autoCommit()
         case .tab:
             // 有預測就列出來（再按一次 Tab 選第一個，或按數字鍵選）；沒有就當一般按鍵，送出後交還給 app。
+            committedText = lastCommitted
             let predictions = currentPredictions
+            committedText = nil
             guard !predictions.isEmpty else { fallthrough }
             // 英文接英文要有空白（hello + world），中文不用。
             func isLatin(_ character: Character?) -> Bool {
                 character.map { $0.isASCII && ($0.isLetter || $0.isNumber) } ?? false
             }
+            let previous = keys.last ?? lastCommitted?.last
             panel = Panel(items: predictions.map { prediction in
-                Item(text: prediction, start: cursor, separator: isLatin(keys.last) && isLatin(prediction.first) ? " " : "")
+                Item(text: prediction, start: cursor, separator: isLatin(previous) && isLatin(prediction.first) ? " " : "")
             }, isSymbols: false)
             return state()
         case .other:

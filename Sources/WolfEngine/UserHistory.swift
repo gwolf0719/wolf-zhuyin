@@ -16,6 +16,9 @@ public final class UserHistory: @unchecked Sendable {
     /// 太長的後續不記（多半是整句英文或貼上的內容）。
     public static let maximumFollowerLength = 16
 
+    /// 代表「一句話的開頭」的前文。不會跟真的前文撞名（那些不是空的就是字）。
+    public static let sentenceStart = "^"
+
     /// 目前記了幾個前文。
     public var contextCount: Int { lock.withLock { following.count } }
 
@@ -55,6 +58,8 @@ public final class UserHistory: @unchecked Sendable {
             }
         }
         var pairs: [(String, String)] = []
+        // 句子的第一個詞也記下來，送出一句之後可以預測下一句怎麼開頭。
+        if let first = units.first { pairs.append((Self.sentenceStart, units[0..<first.wordEnd].map(\.text).joined())) }
         for index in units.indices.dropFirst() {
             let next = units[index..<units[index].wordEnd].map(\.text).joined()
             let previous = units[index - 1]
