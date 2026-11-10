@@ -139,11 +139,40 @@ public struct Composer: Sendable {
     }
 
     /// 游標在結尾、選字窗沒開時才預測；組字區是空的時候，看剛送出的內容。
+    /// 外部來源（本機模型）對同一段前文的預測排最前面，再來是自己的用詞紀錄與詞庫。
     private var currentPredictions: [String] {
         guard predictionsEnabled, panel == nil, cursor == keys.count else { return [] }
-        if keys.isEmpty { return committedText.map { segmenter.predictions(following: $0) } ?? [] }
-        return segmenter.predictions(String(keys), afterChinese: afterChinese)
+        let local = keys.isEmpty
+            ? committedText.map { segmenter.predictions(following: $0) } ?? []
+            : segmenter.predictions(String(keys), afterChinese: afterChinese)
+        guard let external, external.context == predictionContext else { return local }
+        var merged = external.predictions
+        for prediction in local where !merged.contains(prediction) { merged.append(prediction) }
+        return Array(merged.prefix(Self.pageSize))
     }
+
+    /// 外部來源對某段前文的預測。前文一變就不算數。
+    private var external: (context: String, predictions: [String])?
+
+    /// 現在可以接預測的話，預測要接在哪段文字後面（組字區的文字，或剛送出的文字）；不能預測時是 nil。
+    /// 外殼拿這段文字去問本機模型，再用 `offer` 把結果送回來。
+    public var predictionContext: String? {
+        guard predictionsEnabled, panel == nil, cursor == keys.count else { return nil }
+        if keys.isEmpty { return committedText }
+        return segmenter.canPredict(after: String(keys), afterChinese: afterChinese) ? text(of: keys) : nil
+    }
+
+    /// 外部來源（本機模型）算好的預測。前文已經變了就不採用，回傳 nil；採用的話回傳更新後的畫面。
+    public mutating func offer(predictions: [String], for context: String) -> Result? {
+        guard predictionContext == context else { return nil }
+        let cleaned = predictions.filter { !$0.isEmpty && $0.count <= Self.maximumExternalPredictionLength }
+        guard !cleaned.isEmpty else { return nil }
+        external = (context, cleaned)
+        return state()
+    }
+
+    /// 外部預測太長的不要（輸入法是補幾個字，不是代寫整段）。
+    public static let maximumExternalPredictionLength = 12
 
     /// 不再提示送出後的預測（使用者點了別的地方、或停太久沒動作）。
     public mutating func dismissPrediction() {

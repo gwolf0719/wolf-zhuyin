@@ -10,6 +10,8 @@ public struct Preferences: Sendable, Equatable {
     public var learning = true
     /// 組字時提示接下來的字詞，按 Tab 選。
     public var predictions = true
+    /// 用 macOS 內建的本機模型補充預測（看整句的意思續寫）。預設關閉；模型不可用時沒有作用。
+    public var modelPredictions = false
     /// 每天自動檢查並安裝新版。
     public var autoUpdate = true
 
@@ -21,6 +23,7 @@ public struct Preferences: Sendable, Equatable {
         public static let typoTolerance = "TypoTolerance"
         public static let learning = "Learning"
         public static let predictions = "Predictions"
+        public static let modelPredictions = "ModelPredictions"
         public static let autoUpdateDisabled = "AutoUpdateDisabled"
     }
 
@@ -36,6 +39,7 @@ public struct Preferences: Sendable, Equatable {
         typoTolerance = read(Key.typoTolerance, default: true)
         learning = read(Key.learning, default: true)
         predictions = read(Key.predictions, default: true)
+        modelPredictions = read(Key.modelPredictions, default: false)
         autoUpdate = !defaults.bool(forKey: Key.autoUpdateDisabled)
     }
 
@@ -44,6 +48,7 @@ public struct Preferences: Sendable, Equatable {
         defaults.set(typoTolerance, forKey: Key.typoTolerance)
         defaults.set(learning, forKey: Key.learning)
         defaults.set(predictions, forKey: Key.predictions)
+        defaults.set(modelPredictions, forKey: Key.modelPredictions)
         defaults.set(!autoUpdate, forKey: Key.autoUpdateDisabled)
     }
 

@@ -119,3 +119,12 @@ private func type(_ keys: String, _ composer: inout Composer) -> Composer.Result
     #expect(reloaded.entries(.typo).isEmpty)
     #expect(!reloaded.entries(.history).contains { $0.right == "吃" })
 }
+
+/// 本機模型的輸出要濾掉雜訊：編號、重複前文、自己編的下一題、太長的、句尾標點。
+@Test func modelOutputIsCleaned() {
+    #expect(ModelOutput.predictions(from: "很方便\n很實用\n很棒", after: "這個功能我覺得") == ["很方便", "很實用", "很棒"])
+    #expect(ModelOutput.predictions(from: "到。\n到。\n到。", after: "我今天會晚一點") == ["到"])
+    #expect(ModelOutput.predictions(from: "處理\n了\n\n句子：我今天要\n去\n旅行", after: "這個bug我已經") == ["處理", "了"])
+    #expect(ModelOutput.predictions(from: "謝謝你的關心\n謝謝你的支持", after: "謝謝你的") == ["關心", "支持"])
+    #expect(ModelOutput.predictions(from: "1. \n **「開會」**\n很方便，可以幫助我更快完成寫作的工作內容", after: "x").isEmpty)
+}

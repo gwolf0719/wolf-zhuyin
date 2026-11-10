@@ -41,11 +41,19 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
             ("自動修正注音打錯", "聲調按太早、按鍵順序顛倒、按到隔壁鍵。", \.typoTolerance),
             ("記住我的用字習慣", "選過的字、常打的詞、常犯的錯，只存在這台電腦。", \.learning),
             ("打字時預測接下來的字詞", "按 Tab 列出預測，數字鍵選取。", \.predictions),
+            (
+                "用 macOS 內建模型預測（實驗）",
+                ModelPredictor.isAvailable
+                    ? "看整句的意思續寫，停頓一下才出現。全程在這台電腦上，不連網。"
+                    : "這台電腦沒有可用的內建模型（需要 macOS 26 並開啟 Apple Intelligence）。",
+                \.modelPredictions
+            ),
             ("自動更新", "每天檢查一次，下載後驗證簽章才安裝。", \.autoUpdate),
         ]
         for (title, description, keyPath) in descriptions {
             let checkbox = NSButton(checkboxWithTitle: title, target: self, action: #selector(optionChanged(_:)))
             checkbox.tag = options.count
+            if keyPath == \Preferences.modelPredictions { checkbox.isEnabled = ModelPredictor.isAvailable }
             options.append((checkbox, keyPath))
             let detail = NSTextField(labelWithString: description)
             detail.font = .systemFont(ofSize: 11)

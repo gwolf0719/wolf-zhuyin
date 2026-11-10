@@ -701,3 +701,36 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     #expect(composer.handle(.character(Character("\(index! + 1)"))).marked == "我[]")
     #expect(composer.handle(.enter).commit == "我[]")
 }
+
+/// 外部來源（本機模型）的預測：前文相同才採用，排在自己的預測前面；前文一變就失效。
+@Test func externalPredictionsAreMergedForMatchingContext() {
+    var composer = Composer(segmenter: segmenter)
+    _ = type("1j4cl3", composer: &composer)
+    #expect(composer.predictionContext == "不好")
+    // 前文不對的不採用。
+    #expect(composer.offer(predictions: ["吃"], for: "你好") == nil)
+    // 太長或空的丟掉。
+    #expect(composer.offer(predictions: ["", String(repeating: "長", count: 13)], for: "不好") == nil)
+    let offered = composer.offer(predictions: ["說", "意思"], for: "不好")
+    #expect(offered?.prediction == "說")
+    let panel = composer.handle(.tab)
+    #expect(Array(panel.candidates.prefix(2)) == ["說", "意思"])
+    #expect(panel.candidates.filter { $0 == "意思" }.count == 1)
+    #expect(composer.handle(.tab).marked == "不好說")
+    // 前文變了：舊的外部預測不再出現。
+    #expect(composer.predictionContext == "不好說")
+    #expect(!(composer.handle(.tab).candidates.contains("意思") && composer.predictionContext == "不好"))
+    _ = composer.handle(.escape)
+    _ = composer.handle(.escape)
+
+    // 打到一半的音節、關掉預測時：沒有前文可問。
+    _ = type("su", composer: &composer)
+    #expect(composer.predictionContext == nil)
+    _ = composer.handle(.escape)
+    // 送出之後：前文是剛送出的文字。
+    _ = type("su3cl3", then: .enter, composer: &composer)
+    #expect(composer.predictionContext == "你好")
+    #expect(composer.offer(predictions: ["嗎"], for: "你好")?.prediction == "嗎")
+    composer.predictionsEnabled = false
+    #expect(composer.predictionContext == nil)
+}

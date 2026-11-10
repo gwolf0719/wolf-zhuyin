@@ -379,12 +379,22 @@ public struct Segmenter: Sendable {
     /// 預測接下來的內容，最可能的在前，最多 9 個。結尾必須是完整的詞（不是打到一半的音節、標點或空白）。
     /// 使用者自己的用詞紀錄排前面；結尾是中文時再補上詞庫裡以它開頭的常見詞。
     public func predictions(_ input: String, afterChinese: Bool = true) -> [String] {
+        guard let words = wordsBeforePrediction(input, afterChinese: afterChinese) else { return [] }
+        return predictions(afterWords: words)
+    }
+
+    /// 這串按鍵的結尾能不能接預測：必須是完整的詞（不是打到一半的音節、沒認出來的按鍵、標點或空白）。
+    public func canPredict(after input: String, afterChinese: Bool = true) -> Bool {
+        wordsBeforePrediction(input, afterChinese: afterChinese) != nil
+    }
+
+    private func wordsBeforePrediction(_ input: String, afterChinese: Bool) -> [String]? {
         let keys = Array(input)
         let all = pieces(keys, afterChinese: afterChinese, showPending: true)
         guard let last = all.last, !last.isPending, !last.isRawKey, last.text != " ",
               let words = sentences(input, afterChinese: afterChinese).last, let lastWord = words.last,
-              last.text.last == lastWord.last else { return [] }
-        return predictions(afterWords: words)
+              last.text.last == lastWord.last else { return nil }
+        return words
     }
 
     /// 送出之後、組字區是空的時候預測接下來的內容：剛送出的結尾是句末標點就預測下一句的開頭，

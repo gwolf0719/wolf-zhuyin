@@ -12,6 +12,14 @@ final class WolfInputController: IMKInputController {
     private static let predictionLifetime: TimeInterval = 8
     private var predictionExpiry: DispatchWorkItem?
     private var composerIsIdle = true
+    /// 用本機模型補充預測（設定裡的開關，而且模型可用）。
+    private var usesModelPredictions = false
+    /// 最近送出的文字，給模型當前文。換視窗、點滑鼠就清掉，因為游標可能已經不在原處。
+    private var recentCommitted = ""
+    private var modelRequest: DispatchWorkItem?
+    private var lastCursorRect = NSRect.zero
+    /// 停止打字這麼久才問模型，避免每打一鍵就問一次。
+    private static let modelDelay: TimeInterval = 0.25
 
     override init!(server: IMKServer!, delegate: Any!, client inputClient: Any!) {
         super.init(server: server, delegate: delegate, client: inputClient)
@@ -39,7 +47,28 @@ final class WolfInputController: IMKInputController {
         // 先把舊引擎的組字送回原輸入處，避免切換選項時丟掉尚未送出的字。
         guard let client = client() else { return }
         commitComposition(client)
-        composer = Preferences(defaults: .standard).composer(lexicon: sharedLexicon, stores: sharedStores)
+        let preferences = Preferences(defaults: .standard)
+        composer = preferences.composer(lexicon: sharedLexicon, stores: sharedStores)
+        usesModelPredictions = preferences.predictions && preferences.modelPredictions && ModelPredictor.isAvailable
+    }
+
+    /// 停頓一下之後，把目前的句子交給本機模型續寫；結果回來時前文沒變才採用。
+    private func requestModelPrediction() {
+        modelRequest?.cancel()
+        modelRequest = nil
+        guard usesModelPredictions, let context = composer.predictionContext, !context.isEmpty else { return }
+        // 組字中：前文是「最近送出的＋組字區」；剛送出：最近送出的結尾就是它。
+        let text = recentCommitted.hasSuffix(context) ? recentCommitted : recentCommitted + context
+        let request = DispatchWorkItem { [weak self] in
+            ModelPredictor.predict(after: text) { predictions in
+                guard let self, let result = self.composer.offer(predictions: predictions, for: context),
+                      result.candidates.isEmpty, let prediction = result.prediction else { return }
+                CandidatePanel.shared.show(prediction: prediction, near: self.lastCursorRect)
+                if result.marked.isEmpty { self.schedulePredictionExpiry() }
+            }
+        }
+        modelRequest = request
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.modelDelay, execute: request)
     }
 
     override func menu() -> NSMenu! {
@@ -70,7 +99,17 @@ final class WolfInputController: IMKInputController {
         Int(NSEvent.EventTypeMask([.keyDown, .leftMouseDown, .rightMouseDown]).rawValue)
     }
 
+    /// 送出後的預測提示放一陣子就收掉，之後的 Tab 照常交給 app。
+    private func schedulePredictionExpiry() {
+        predictionExpiry?.cancel()
+        let expiry = DispatchWorkItem { [weak self] in self?.dismissPrediction() }
+        predictionExpiry = expiry
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.predictionLifetime, execute: expiry)
+    }
+
     private func dismissPrediction() {
+        modelRequest?.cancel()
+        modelRequest = nil
         predictionExpiry?.cancel()
         predictionExpiry = nil
         composer.dismissPrediction()
@@ -80,6 +119,8 @@ final class WolfInputController: IMKInputController {
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
         if let event, event.type == .leftMouseDown || event.type == .rightMouseDown {
             // 只在沒有組字時收掉預測；組字中的點擊照系統原本的方式處理。
+            // 游標可能被點到別處了，之前送出的文字不再是前文。
+            recentCommitted = ""
             if composerIsIdle { dismissPrediction() }
             return false
         }
@@ -93,6 +134,7 @@ final class WolfInputController: IMKInputController {
         debugLog("handle keyDown handled=\(result.handled) commit=\(result.commit != nil)")
         if let text = result.commit {
             client.insertText(text, replacementRange: Self.noReplacement)
+            recentCommitted = String((recentCommitted + text).suffix(ModelPredictor.contextLength))
         }
         // 游標位置換算成 UTF-16 長度（系統文字 API 的單位）。
         let cursorLocation = String(result.marked.prefix(result.cursor)).utf16.count
@@ -108,11 +150,7 @@ final class WolfInputController: IMKInputController {
         composerIsIdle = result.marked.isEmpty
         if result.candidates.isEmpty, let prediction = result.prediction {
             CandidatePanel.shared.show(prediction: prediction, near: Self.cursorRect(in: client, at: cursorLocation))
-            if result.marked.isEmpty {
-                let expiry = DispatchWorkItem { [weak self] in self?.dismissPrediction() }
-                predictionExpiry = expiry
-                DispatchQueue.main.asyncAfter(deadline: .now() + Self.predictionLifetime, execute: expiry)
-            }
+            if result.marked.isEmpty { schedulePredictionExpiry() }
         } else if result.candidates.isEmpty {
             CandidatePanel.shared.hide()
         } else {
@@ -121,10 +159,13 @@ final class WolfInputController: IMKInputController {
                 near: Self.cursorRect(in: client, at: cursorLocation)
             )
         }
+        lastCursorRect = Self.cursorRect(in: client, at: cursorLocation)
+        requestModelPrediction()
         return result.handled
     }
 
     override func deactivateServer(_ sender: Any!) {
+        recentCommitted = ""
         dismissPrediction()
         super.deactivateServer(sender)
         // 新版已換好、要結束行程換版之前，先等學習紀錄寫完。
