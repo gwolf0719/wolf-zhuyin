@@ -32,6 +32,8 @@ public struct Segmenter: Sendable {
         public var typoMissingTone = -2.5
         /// 修正「按到隔壁鍵」的代價。
         public var typoNeighbor = -4.0
+        /// 修正「使用者自己常犯的錯」的代價。
+        public var typoPersonal = -0.5
         /// 修正後組成的詞至少要這麼常見才採用。
         public var typoMinWordScore = -6.0
         /// 中英切換一次的代價。
@@ -44,6 +46,8 @@ public struct Segmenter: Sendable {
     public var userPhrases: UserPhrases?
     /// 使用者送出過的詞序；有設定時，預測優先參考它。
     public var history: UserHistory?
+    /// 使用者個人的打錯習慣；有設定時，他常犯的錯會直接修正。
+    public var typos: UserTypos?
     public let english: EnglishWords
     public var weights = Weights()
 
@@ -76,6 +80,8 @@ public struct Segmenter: Sendable {
         let end: Int
         /// 0 表示照標準打法；負數是修正打錯的代價。
         let penalty: Double
+        /// 根據使用者自己更正過的紀錄修的：證據夠強，不必再靠旁邊的字成詞。
+        var isPersonal = false
     }
 
     private static let maxSyllablesPerWord = 8
@@ -412,6 +418,8 @@ public struct Segmenter: Sendable {
             var reading = ""
             var ends: [Int] = []
             var penalty = 0.0
+            /// 用了通用規則猜的修正（不是使用者自己的紀錄）：要成詞才採用。
+            var isGuess = false
         }
         var chains = [Chain()]
         for _ in 0..<Self.maxSyllablesPerWord where !chains.isEmpty {
@@ -423,16 +431,17 @@ public struct Segmenter: Sendable {
                     next.reading += next.reading.isEmpty ? option.reading : "-" + option.reading
                     next.ends.append(option.end)
                     next.penalty += option.penalty
+                    if option.penalty < 0, !option.isPersonal { next.isGuess = true }
                     extended.append(next)
                     // 修正過的音節要連同旁邊的字組成一個夠常見的詞才採用：這是「使用者真的想打這個」最強的證據。
                     // 單一個字的修正太容易把 v3、x86 這類內容改掉。
-                    let isCorrection = next.penalty < 0
+                    let isCorrection = next.isGuess
                     if let entry = entries(for: next.reading).first,
                        !isCorrection || (next.ends.count >= 2 && entry.score >= weights.typoMinWordScore) {
                         result.append(Edge(
                             start: start, end: option.end, language: .chinese, text: entry.text,
                             score: entry.score + next.penalty, reading: next.reading,
-                            syllableEnds: next.ends, isCorrection: next.penalty < 0
+                            syllableEnds: next.ends, isCorrection: isCorrection
                         ))
                     }
                 }
@@ -478,6 +487,19 @@ extension Segmenter {
         }
         if let exact = Dachen.syllable(in: keys, from: start) { add(exact.reading, exact.end, 0) }
         guard weights.typoTolerance else { return options }
+
+        // 使用者自己更正過兩次以上的錯：直接當成他想打的那個音節。
+        if let typos {
+            for length in 2...5 where start + length <= keys.count {
+                guard let intended = typos.intended(for: String(keys[start..<start + length])),
+                      let syllable = Dachen.syllable(in: Array(intended), from: 0), syllable.end == intended.count,
+                      lexicon.syllables.contains(syllable.reading),
+                      seen.insert("\(syllable.reading)@\(start + length)").inserted else { continue }
+                options.append(SyllableOption(
+                    reading: syllable.reading, end: start + length, penalty: weights.typoPersonal, isPersonal: true
+                ))
+            }
+        }
 
         func isToneDigit(_ key: Character) -> Bool { key != " " && Dachen.tones[key] != nil }
         func hasLetterSymbol(_ range: Range<Int>) -> Bool {

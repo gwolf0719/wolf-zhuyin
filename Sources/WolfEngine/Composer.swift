@@ -88,6 +88,8 @@ public struct Composer: Sendable {
     /// 上一次送出的文字是否以中文結尾；決定下一段開頭的標點用全形還是半形。
     private var afterChinese = true
     private var panel: Panel?
+    /// 剛退格刪掉的按鍵，以及之後在同一個位置重打的按鍵。用來學使用者的打錯習慣。
+    private var fix: (deleted: [Character], retyped: [Character], position: Int)?
 
     public init(segmenter: Segmenter) {
         self.segmenter = segmenter
@@ -146,6 +148,45 @@ public struct Composer: Sendable {
         return result
     }
 
+    /// 退格後重打：重打的內容湊成一個完整音節時，跟剛刪掉的開頭比對。
+    /// 很像（順序不同、差一鍵）就記成一次「打錯 → 更正」；刪掉的那段本身若是正確的音節或英文字，不算打錯。
+    private mutating func observeRetyped(_ character: Character) {
+        guard var current = fix, character.isASCII, cursor == current.position + current.retyped.count + 1 else {
+            fix = nil
+            return
+        }
+        current.retyped.append(character)
+        fix = current
+        guard let syllable = Dachen.syllable(in: current.retyped, from: 0) else {
+            if current.retyped.count > 5 { fix = nil }
+            return
+        }
+        guard syllable.end == current.retyped.count, segmenter.lexicon.syllables.contains(syllable.reading) else {
+            fix = nil
+            return
+        }
+        // 刪掉的內容可能不只一個字：取開頭長度相近的那一段來比。
+        let length = current.retyped.count
+        for candidate in [length, length - 1, length + 1] where candidate >= 2 && candidate <= current.deleted.count {
+            let mistyped = Array(current.deleted.prefix(candidate))
+            if mistyped == current.retyped {
+                // 這個字原本就打對了，只是跟著被刪掉；繼續看後面的。
+                fix = (Array(current.deleted.dropFirst(candidate)), [], cursor)
+                return
+            }
+            guard UserTypos.looksLikeSameSyllable(mistyped, current.retyped) else { continue }
+            let wasValidSyllable = Dachen.syllable(in: mistyped, from: 0).map {
+                $0.end == mistyped.count && segmenter.lexicon.syllables.contains($0.reading)
+            } ?? false
+            if !wasValidSyllable, segmenter.english.tier(of: String(mistyped)) == nil {
+                segmenter.typos?.learn(mistyped: String(mistyped), intended: String(current.retyped))
+            }
+            fix = (Array(current.deleted.dropFirst(candidate)), [], cursor)
+            return
+        }
+        fix = nil
+    }
+
     /// 把送出的內容記進用詞紀錄。
     private func record(_ committedKeys: String) {
         guard let history = segmenter.history else { return }
@@ -182,7 +223,15 @@ public struct Composer: Sendable {
     }
 
     public mutating func handle(_ key: Key) -> Result {
-        if panel != nil, let result = handleInPanel(key) { return result }
+        // 退格之後只有「接著打字」或「繼續退格」才算在更正；其他動作都結束這次觀察。
+        switch key {
+        case .character, .backspace: break
+        default: fix = nil
+        }
+        if panel != nil {
+            fix = nil
+            if let result = handleInPanel(key) { return result }
+        }
 
         switch key {
         case .character(Self.symbolKey):
@@ -195,6 +244,7 @@ public struct Composer: Sendable {
             if keys.isEmpty, character == " " { return Result(handled: false) }
             keys.insert(character, at: cursor)
             cursor += 1
+            observeRetyped(character)
             return autoCommit()
         case .tab:
             // 有預測就列出來（再按一次 Tab 選第一個，或按數字鍵選）；沒有就當一般按鍵，送出後交還給 app。
@@ -212,8 +262,17 @@ public struct Composer: Sendable {
         case .backspace:
             guard !keys.isEmpty else { return Result(handled: false) }
             let length = min(cursor, max(1, segmenter.backspaceLength(beforeCursor, afterChinese: afterChinese)))
+            let removed = Array(keys[cursor - length..<cursor])
             keys.removeSubrange(cursor - length..<cursor)
             cursor -= length
+            if !removed.allSatisfy(\.isASCII) {
+                fix = nil
+            } else if let current = fix, current.retyped.isEmpty, current.position == cursor + length {
+                // 連續退格：刪掉的內容接在前面。
+                fix = (removed + current.deleted, [], cursor)
+            } else {
+                fix = (removed, [], cursor)
+            }
             return state()
         case .escape:
             guard !keys.isEmpty else { return Result(handled: false) }

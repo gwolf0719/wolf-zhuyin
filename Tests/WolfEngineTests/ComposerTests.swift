@@ -438,3 +438,66 @@ private func type(_ keys: String, then last: Composer.Key? = nil, composer: inou
     #expect(last.marked == "我ㄋㄧ")
     #expect(last.focus == 1..<3)
 }
+
+/// 退格後重打成很像的東西＝一次更正。同一個錯更正過兩次，之後就自動修，單獨一個字也修。
+@Test func learnsPersonalTyposFromBackspaceAndRetype() throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("wolf-test-\(UUID().uuidString)/typos.json")
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    var learning = segmenter
+    learning.typos = UserTypos(fileURL: url)
+    var composer = Composer(segmenter: learning)
+
+    // 通用規則不修單獨一個字的錯。
+    #expect(type("s3u", composer: &composer).marked == "s3u")
+    _ = composer.handle(.backspace)
+    #expect(type("su3", composer: &composer).marked == "你")
+    _ = composer.handle(.enter)
+    // 只更正過一次，還不套用。
+    #expect(type("s3u", composer: &composer).marked == "s3u")
+    _ = composer.handle(.backspace)
+    _ = type("su3", then: .enter, composer: &composer)
+    // 第二次之後自動修正。
+    #expect(type("s3u", composer: &composer).marked == "你")
+    #expect(composer.handle(.enter).commit == "你")
+    #expect(UserTypos(fileURL: url).intended(for: "s3u") == "su3")
+
+    // 沒設定紀錄的引擎不受影響。
+    var plain = Composer(segmenter: segmenter)
+    #expect(type("s3u", composer: &plain).marked == "s3u")
+}
+
+/// 不該學的：換一個字（不是手誤）、原本就是正確音節、原本是英文字、中間做了別的事。
+@Test func doesNotLearnFromChangesOfMind() {
+    var learning = segmenter
+    let typos = UserTypos()
+    learning.typos = typos
+    var composer = Composer(segmenter: learning)
+    for _ in 0..<3 {
+        // 好 → 壞：完全不同的字。
+        _ = type("cl3", composer: &composer)
+        _ = composer.handle(.backspace)
+        _ = type("cj94", then: .enter, composer: &composer)
+        // 膩（su4）→ 你（su3）：只差聲調，但 su4 本身是正確的音節，可能是真的想改字。
+        _ = type("su4", composer: &composer)
+        _ = composer.handle(.backspace)
+        _ = type("su3", then: .enter, composer: &composer)
+        // 中間移動過游標就不算。
+        _ = type("s3u", composer: &composer)
+        _ = composer.handle(.backspace)
+        _ = composer.handle(.left)
+        _ = type("su3", then: .enter, composer: &composer)
+    }
+    #expect(typos.intended(for: "cl3") == nil)
+    #expect(typos.intended(for: "su4") == nil)
+    #expect(typos.intended(for: "s3u") == nil)
+}
+
+@Test(arguments: [
+    ("s3u", "su3", true), ("us3", "su3", true),   // 順序不同
+    ("sy3", "su3", true),                           // 差一個鍵
+    ("su", "su3", true), ("suu3", "su3", true),    // 少一個、多一個
+    ("su3", "su3", false), ("cl3", "cj94", false), ("ab", "su3", false),
+])
+func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
+    #expect(UserTypos.looksLikeSameSyllable(Array(mistyped), Array(intended)) == expected)
+}
