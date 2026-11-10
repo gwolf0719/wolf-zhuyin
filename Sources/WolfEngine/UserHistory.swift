@@ -31,7 +31,13 @@ public final class UserHistory: @unchecked Sendable {
     /// 目前所有的用詞紀錄（評測工具用）。
     public var all: [String: [String: Int]] { lock.withLock { following } }
 
+    /// 某段前文後面接某個詞，使用者打過幾次。選字時用來偏好他自己常用的搭配。
+    public func count(after context: String, next: String) -> Int {
+        lock.withLock { following[context]?[next] ?? 0 }
+    }
+
     /// 刪掉一筆用詞紀錄（某段前文後面接的某個詞）。
+
     public func remove(context: String, next: String) {
         lock.withLock {
             following[context]?[next] = nil

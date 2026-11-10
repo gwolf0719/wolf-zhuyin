@@ -136,7 +136,18 @@ case "personal":
             if outcome.textCorrect { phrasesCorrect += 1 } else if verbose { print("用詞 \(outcome.expected) → \(outcome.actual)") }
         }
     }
-    print("常用詞組 \(phrases) 組（出現至少 \(UserHistory.minimumCount) 次）：沒有個人紀錄時轉換正確 \(phrasesCorrect)")
+    // 接上用詞紀錄之後：選字會偏好自己打過的搭配。
+    var learned = segmenter
+    learned.history = UserHistory(fileURL: directory.appendingPathComponent("history.json"))
+    let learnedEvaluation = Evaluation(segmenter: learned)
+    var learnedCorrect = 0
+    for (context, followers) in history where context.count == 2 && !context.contains(where: \.isASCII) {
+        for (next, count) in followers where count >= UserHistory.minimumCount && !next.contains(where: \.isASCII) {
+            guard let outcome = learnedEvaluation.run(context + next) else { continue }
+            if outcome.textCorrect { learnedCorrect += 1 } else if verbose { print("用詞（接上紀錄後仍錯）\(outcome.expected) → \(outcome.actual)") }
+        }
+    }
+    print("常用詞組 \(phrases) 組（出現至少 \(UserHistory.minimumCount) 次）：沒有個人紀錄時轉換正確 \(phrasesCorrect)，接上用詞紀錄後 \(learnedCorrect)")
 
 case "stability":
     // 一鍵一鍵打評測句，列出已顯示的中文或英文後來又被改判的情況。

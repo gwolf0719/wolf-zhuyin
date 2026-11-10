@@ -149,3 +149,23 @@ func languageAccuracyDoesNotRegress(path: String, threshold: Double) throws {
         }
     }
 }
+
+/// 選字會偏好使用者自己打過兩次以上的搭配（前一、兩個字 → 這個詞）。
+@Test func conversionPrefersTheUsersOwnPhrases() {
+    let evaluation = Evaluation(segmenter: segmenter)
+    let keys = evaluation.type("幫我洗")!.keys
+    #expect(convert(keys) == "幫我喜")
+    var personal = segmenter
+    let history = UserHistory()
+    personal.history = history
+    history.record(["幫", "我", "洗"])
+    // 只打過一次還不算。
+    #expect(personal.segment(keys).map(\.text).joined() == "幫我喜")
+    history.record(["幫", "我", "洗"])
+    #expect(personal.segment(keys).map(\.text).joined() == "幫我洗")
+    // 「我→洗」被擠掉、只剩「幫我→洗」時，靠前兩個字也認得。
+    history.remove(context: "我", next: "洗")
+    #expect(personal.segment(keys).map(\.text).joined() == "幫我洗")
+    // 別的前文不受影響。
+    #expect(personal.segment(evaluation.type("他喜")!.keys).map(\.text).joined() == "他喜")
+}

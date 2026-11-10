@@ -1,3 +1,4 @@
+import Foundation
 /// 把一串原始按鍵切成中文段與英文段，並給出各段的輸出文字。
 ///
 /// 做法：按鍵位置之間拉三種邊（中文詞、英文詞、原樣輸出的單一按鍵），
@@ -46,6 +47,10 @@ public struct Segmenter: Sendable {
         public var languageSwitch = -1.0
         /// 每多一個中文詞的代價：讓「再說」這種完整的詞贏過拆開的「在＋說」。
         public var chineseWord = -0.5
+        /// 使用者自己打過的搭配（前一個字 → 這個詞）加分：每多一倍次數加這麼多，有上限。
+        /// 讓「幫我洗」這種他常打的內容不會被詞庫的「喜」蓋掉。
+        public var historyBonus = 1.0
+        public var historyBonusLimit = 3.0
         /// 前後字搭配分數的倍數；0 表示不看上下文。
         public var context = 1.0
         /// 同一個讀音最多拿幾個同音詞去比上下文。
@@ -525,6 +530,8 @@ public struct Segmenter: Sendable {
         struct State: Hashable {
             let language: Language
             let last: Character
+            /// 最後一個字的前一個字（查使用者的用詞紀錄要看前兩個字）；不是連續的中文時是句子開頭的標記。
+            var before: Character = CharacterContext.sentenceStart
         }
         typealias Entry = (score: Double, edge: Edge?, previous: State?)
         let context = self.context
@@ -551,7 +558,10 @@ public struct Segmenter: Sendable {
         // 同分時要有固定的勝負：字典的走訪順序每次不一定相同，會讓組字區顯示的和送出的選到不同的同音字。
         // 所以狀態一律照固定順序走訪，同分時先到的贏。
         func ordered(_ states: [State: Entry]) -> [(key: State, value: Entry)] {
-            states.sorted { ($0.key.language == .chinese ? 0 : 1, String($0.key.last)) < ($1.key.language == .chinese ? 0 : 1, String($1.key.last)) }
+            states.sorted {
+                ($0.key.language == .chinese ? 0 : 1, String($0.key.last), String($0.key.before))
+                    < ($1.key.language == .chinese ? 0 : 1, String($1.key.last), String($1.key.before))
+            }
         }
         for position in 0..<keys.count where !best[position].isEmpty {
             let states = ordered(best[position])
@@ -569,10 +579,25 @@ public struct Segmenter: Sendable {
                     var score = entry.score + edge.score + (switched ? weights.languageSwitch : 0)
                     if edge.language == .chinese, edge.punctuation == nil, let first = edge.text.first {
                         score += contextScore(state.last, first)
+                        // 前一個是中文字或句子開頭時，查使用者自己打過幾次這個搭配。
+                        if let history, edge.reading != nil, !state.last.isASCII || state.last == CharacterContext.sentenceStart {
+                            // 前兩個字的紀錄比較準；前一個字的紀錄可能因為後續太多被擠掉。
+                            var count = history.count(after: String(state.last), next: edge.text)
+                            if !state.before.isASCII, !state.last.isASCII {
+                                count = max(count, history.count(after: String([state.before, state.last]), next: edge.text))
+                            }
+                            if count >= UserHistory.minimumCount {
+                                score += min(weights.historyBonusLimit, weights.historyBonus * log2(Double(count)))
+                            }
+                        }
                     } else if edge.punctuation != nil, state.language == .chinese {
                         score += contextScore(state.last, CharacterContext.sentenceEnd)
                     }
-                    let next = State(language: edge.language, last: lastCharacter(after: edge))
+                    var next = State(language: edge.language, last: lastCharacter(after: edge))
+                    if edge.language == .chinese, edge.punctuation == nil, !next.last.isASCII {
+                        // 這條邊有兩個字以上就取倒數第二個；只有一個字就是上一個狀態的最後一個字。
+                        next.before = edge.text.count >= 2 ? edge.text[edge.text.index(edge.text.endIndex, offsetBy: -2)] : state.last
+                    }
                     if score > best[edge.end][next]?.score ?? -.infinity {
                         best[edge.end][next] = (score, edge, state)
                     }
