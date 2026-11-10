@@ -1,0 +1,65 @@
+# 調參用。每行是「期望輸出」，按鍵由 wolf 依詞庫讀音反推。
+# 中文與英文之間有沒有空白，代表使用者有沒有按空白鍵。
+你好
+今天天氣很好
+我想喝咖啡
+他說明天會下雨
+我們一起去吃飯
+這個問題很難解決
+因為時間不夠所以沒有完成
+hello world
+please check the code
+this is a test
+I will send you the file tomorrow
+我用Mac打字
+我用 Mac 打字
+這個bug我明天修
+幫我review一下這個PR
+等一下開meeting
+你有收到我的email嗎
+這個feature下週release
+我覺得這個design不錯
+先commit再push
+deploy到production之前要先測試
+這個API的token過期了
+請幫我update一下文件
+我在GitHub上開了一個issue
+用Swift寫一個輸入法
+我的iPhone沒電了
+今天要demo給客戶看
+這個project的deadline是下週五
+OK我知道了
+thanks你人真好
+我up主的影片都有看
+音量調高一點
+因為他不在
+把檔案upload到server
+我們用AI來做預測
+他摸了一下貓
+這部影片是mp4格式
+運動對身體很好
+我買了一台新的MacBook Pro
+你用Chrome還是Safari
+下午三點開會
+我有3個問題
+總共100元
+今年是2026年
+版本是v2
+用Python跑一下script
+這個function有bug
+我去7-11買東西
+請用LINE聯絡我
+誰可以幫我
+go語言很好學
+我們go吧
+高雄的天氣很熱
+貓在睡覺
+書放在桌上
+你好，我是James。
+這個bug修好了嗎？
+太棒了！
+他說「明天再說」
+請看docs/README.md這個檔案
+OK, let me check.
+我買了蘋果、香蕉和牛奶
+版本是v1.2，下週release

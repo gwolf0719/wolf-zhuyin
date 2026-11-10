@@ -1,0 +1,64 @@
+# 保留集：不看這份的錯誤來調參，只用來回報數字。
+謝謝你的幫忙
+明天早上九點見
+我不知道他在想什麼
+這家餐廳的東西很好吃
+請問洗手間在哪裡
+昨天晚上睡得不好
+如果有問題再跟我說
+good morning
+see you next week
+let me know if you need help
+I think we should fix this first
+我用Windows比較習慣
+這個 app 很好用
+幫我debug這段程式
+我已經merge到main了
+這個branch可以刪掉了
+記得寫test
+你的password太簡單了
+請重新login一次
+這個server掛了
+我正在download檔案
+用Google查一下
+這個model的效果比較好
+把prompt改一下試試看
+先build再說
+這是一個open source專案
+我的code review還沒過
+今天work from home
+這個UI有點醜
+等我一下我在meeting
+你的idea很好
+這個link打不開
+我要去Costco買東西
+用Excel整理資料
+他是我們的team leader
+我明天要去Taipei 101
+這首歌很好聽
+音樂開太大聲了
+引用這篇文章
+這是mp3檔案
+暈車很不舒服
+我訂了5個便當
+大概20分鐘到
+現在是4點
+iOS 26更新了
+用Docker跑起來
+這個error是什麼意思
+我想買AirPods
+no problem我來處理
+so我們現在要怎麼辦
+他do了什麼
+科技業的薪水很高
+出門記得帶傘
+吃飽了嗎
+開車要小心
+謝謝，辛苦了。
+你確定要delete嗎？
+等等！先不要push
+老闆說「下週一再討論」
+設定檔在config/app.json裡面
+Sure, no problem.
+會議有James、Amy和我
+大概3.5公里，走路20分鐘
