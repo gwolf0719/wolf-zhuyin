@@ -319,6 +319,12 @@ public struct Segmenter: Sendable {
         if let symbols = Dachen.symbolsByKey(span) {
             result.append(Candidate(text: symbols, start: start, reading: nil))
         }
+        // 照打：畫面上被換掉的（[] 變成「」、. 變成。）可以改回按的那個字元。
+        let typed = String(span)
+        let shown = all.filter { $0.keys.lowerBound >= start && $0.keys.upperBound <= cursor }.map(\.text).joined()
+        if shown != typed, !result.contains(where: { $0.text == typed }) {
+            result.append(Candidate(text: typed, start: start, reading: nil, inserted: String(typed.map(Self.literal))))
+        }
         return result
     }
 

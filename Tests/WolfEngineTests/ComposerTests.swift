@@ -681,3 +681,14 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     for key in "5ek4" { _ = composer.handle(.character(key)) }
     #expect(composer.handle(.down).candidates.contains("這"))
 }
+
+/// 中文句子裡的 [] 會變成「」；按 ↓ 可以改回半形的 []。
+@Test func bracketsCanBeTypedAsIs() {
+    var composer = Composer(segmenter: segmenter)
+    #expect(type("ji3[]", composer: &composer).marked == "我「」")
+    let panel = composer.handle(.down)
+    let index = panel.candidates.firstIndex(of: "[]")
+    #expect(index != nil)
+    #expect(composer.handle(.character(Character("\(index! + 1)"))).marked == "我[]")
+    #expect(composer.handle(.enter).commit == "我[]")
+}
