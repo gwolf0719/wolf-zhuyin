@@ -21,15 +21,58 @@ macOS 專用的注音輸入法（大千鍵盤），目標是不用按切換鍵�
 - `Sources/WolfIME`：輸入法外殼（InputMethodKit）。不需要 Xcode，由 `scripts/build-app.sh` 組成 `.app`。
 - `Eval/`：中英混打評測集。
 
-## 快速開始
+## 安裝
+
+需要 Apple Silicon 的 Mac、macOS 14 以上。在終端機執行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gwolf0719/wolf-zhuyin/main/install.sh | bash
+```
+
+然後到「系統設定 → 鍵盤 → 輸入方式 → 編輯 → ＋ → 繁體中文」加入「狼注音」。
+
+### 自動更新
+
+輸入法啟動後每天向 GitHub 查一次新版。下載的檔案要通過 Ed25519 簽章驗證才會安裝，並在你切換輸入法的空檔換成新版。
+
+```bash
+# 立刻檢查更新
+~/Library/Input\ Methods/WolfZhuyin.app/Contents/MacOS/WolfZhuyin --check-update
+# 關閉自動更新
+defaults write tw.foso.inputmethod.WolfZhuyin AutoUpdateDisabled -bool true
+```
+
+### 移除
+
+先在系統設定的輸入方式裡移除狼注音，再執行：
+
+```bash
+pkill -x WolfZhuyin; rm -rf ~/Library/Input\ Methods/WolfZhuyin.app ~/Library/Application\ Support/WolfZhuyin
+```
+
+## 操作
+
+| 按鍵 | 效果 |
+|---|---|
+| 直接打字 | 中英文自動判斷，標點自動全形／半形 |
+| `Enter` | 送出組字區的內容 |
+| `←` `→` | 在組字區移動游標 |
+| `↓` | 對游標前的字開選字窗；數字鍵選取 |
+| `\` | 符號表；連按兩下輸出反斜線 |
+| 退格 | 刪一個字；注音打錯的按鍵串一次刪掉 |
+| `Esc` | 關選字窗，或清空組字區 |
+
+## 開發
+
+不需要 Xcode，只要 Command Line Tools。
+
 ```bash
 swift run wolf type "ji3m/4Mac283y4"   # → 我用Mac打字
-swift run wolf keys "你好"              # → su3cl3
-make eval                               # 跑評測集
-make test                               # 跑測試
-make install                            # 建置輸入法並裝進 ~/Library/Input Methods
+make test                               # 單元測試、不變式測試、評測門檻
+make eval                               # 印出中英混打評測集的結果
+make install                            # 建置並裝進 ~/Library/Input Methods，再跑真實打字測試
+scripts/release.sh 0.1.0                # 發版（需要簽章私鑰）
 ```
-安裝後到「系統設定 → 鍵盤 → 輸入方式 → 編輯 → ＋」，在繁體中文裡加入「狼注音」。
 
 ## 專案結構
 ```
@@ -41,5 +84,12 @@ scripts/build-app.sh  不靠 Xcode 的打包腳本
 Tests/                測試
 Eval/                 評測集（dev 調參用、test 保留集）
 Data/mcbopomofo/      中文詞庫
+Sources/WolfUpdate/   更新邏輯（版本比對、簽章驗證）
+Sources/WolfRelease/  發版簽章工具
+install.sh            安裝腳本
 docs/decisions.md     決策紀錄
 ```
+
+## 授權
+
+MIT，見 [LICENSE](LICENSE)。中文詞庫來自[小麥注音](https://github.com/openvanilla/McBopomofo)（MIT），見 [Data/mcbopomofo](Data/mcbopomofo/NOTICE.md)。

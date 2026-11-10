@@ -10,10 +10,13 @@ let package = Package(
     ],
     targets: [
         .target(name: "WolfEngine"),
+        .target(name: "WolfUpdate"),
+        .executableTarget(name: "WolfRelease", dependencies: ["WolfUpdate"]),
+        .testTarget(name: "WolfUpdateTests", dependencies: ["WolfUpdate"]),
         .executableTarget(name: "wolf", dependencies: ["WolfEngine"]),
         .executableTarget(
             name: "WolfIME",
-            dependencies: ["WolfEngine"],
+            dependencies: ["WolfEngine", "WolfUpdate"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .executableTarget(

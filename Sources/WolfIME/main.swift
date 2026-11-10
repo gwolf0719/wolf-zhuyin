@@ -6,6 +6,8 @@ import WolfEngine
 // 打包後的用法：
 //   WolfZhuyin --register   向系統登記這個輸入法（安裝後跑一次）
 //   WolfZhuyin --enable     把它加入使用者的輸入方式（等同在系統設定手動加入）
+//   WolfZhuyin --check-update  立刻檢查並安裝新版
+//   WolfZhuyin --version    印出版本
 //   WolfZhuyin --status     印出系統是否認得、是否已啟用
 // 不帶參數時由系統啟動，作為輸入法伺服器常駐。
 
@@ -33,6 +35,23 @@ case "--enable":
     print(failed.isEmpty ? "已加入輸入方式" : "加入失敗（OSStatus \(failed[0])）")
     exit(failed.isEmpty ? 0 : 1)
 
+case "--check-update":
+    // 立刻檢查並安裝新版；常駐中的輸入法會被結束，下次切過去時啟動新版。
+    let message = Updater.checkAndInstall()
+    print(message)
+    if Updater.pendingRestart {
+        let me = ProcessInfo.processInfo.processIdentifier
+        for app in NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
+        where app.processIdentifier != me {
+            app.terminate()
+        }
+    }
+    exit(0)
+
+case "--version":
+    print(Updater.currentVersion)
+    exit(0)
+
 case "--status":
     guard let source = installedSource() else {
         print("系統不認得這個輸入法")
@@ -59,5 +78,6 @@ let server = IMKServer(
     name: Bundle.main.infoDictionary?["InputMethodConnectionName"] as? String,
     bundleIdentifier: Bundle.main.bundleIdentifier
 )
+Updater.start()
 debugLog("server started name=\(Bundle.main.infoDictionary?["InputMethodConnectionName"] ?? "nil") server=\(String(describing: server))")
 NSApplication.shared.run()

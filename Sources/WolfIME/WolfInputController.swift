@@ -53,6 +53,7 @@ final class WolfInputController: IMKInputController {
     override func deactivateServer(_ sender: Any!) {
         CandidatePanel.shared.hide()
         super.deactivateServer(sender)
+        Updater.restartIfPending()
     }
 
     override func commitComposition(_ sender: Any!) {
