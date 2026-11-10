@@ -28,6 +28,9 @@ public final class UserHistory: @unchecked Sendable {
         following = file.load() ?? [:]
     }
 
+    /// 目前所有的用詞紀錄（評測工具用）。
+    public var all: [String: [String: Int]] { lock.withLock { following } }
+
     /// 等排定的寫入完成。
     public func flush() { file.flush() }
 

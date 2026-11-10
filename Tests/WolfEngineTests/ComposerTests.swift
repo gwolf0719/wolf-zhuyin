@@ -442,7 +442,7 @@ private func type(_ keys: String, then last: Composer.Key? = nil, composer: inou
     #expect(last.focus == 1..<3)
 }
 
-/// 退格後重打成很像的東西＝一次更正。同一個錯更正過兩次，之後就自動修，單獨一個字也修。
+/// 退格後重打成很像的東西＝一次更正。帶數字聲調的錯更正一次，之後就自動修，單獨一個字也修。
 @Test func learnsPersonalTyposFromBackspaceAndRetype() throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent("wolf-test-\(UUID().uuidString)/typos.json")
     defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
@@ -455,11 +455,7 @@ private func type(_ keys: String, then last: Composer.Key? = nil, composer: inou
     _ = composer.handle(.backspace)
     #expect(type("su3", composer: &composer).marked == "你")
     _ = composer.handle(.enter)
-    // 只更正過一次，還不套用。
-    #expect(type("s3u", composer: &composer).marked == "s3u")
-    _ = composer.handle(.backspace)
-    _ = type("su3", then: .enter, composer: &composer)
-    // 第二次之後自動修正。
+    // 更正過一次之後自動修正。
     #expect(type("s3u", composer: &composer).marked == "你")
     #expect(composer.handle(.enter).commit == "你")
     learning.typos?.flush()

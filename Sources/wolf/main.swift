@@ -6,11 +6,14 @@ let usage = """
   wolf type <按鍵>      把按鍵序列轉成文字，例如 wolf type "su3cl3hello "
   wolf keys <文字>      把文字反推成按鍵序列
   wolf eval <檔案>...   跑評測集（每行一句期望輸出，# 開頭為註解）
+  wolf steps <文字>     一鍵一鍵打，印出每一步組字區的樣子
+  wolf stability <檔案>... 列出打字途中中英被改判的句子
+  wolf personal [-v]    用本機的學習紀錄評測（打錯還原率、常用詞組轉換）
 詞庫路徑預設 Data/mcbopomofo/data.txt，可用環境變數 WOLF_LEXICON 覆蓋。
 """
 
 let arguments = Array(CommandLine.arguments.dropFirst())
-guard arguments.count >= 2 else {
+guard arguments.count >= 2 || arguments.first == "personal" else {
     print(usage)
     exit(2)
 }
@@ -75,6 +78,41 @@ case "steps":
     // 一鍵一鍵打一句話，印出每一步組字區的樣子。
     guard let result = evaluation.stability(arguments[1]) else { exit(1) }
     print(result.steps.joined(separator: " | "))
+
+case "personal":
+    // 用本機的學習紀錄評測（只在這台電腦跑，紀錄不離開本機、不進版本庫）。
+    let directory = ProcessInfo.processInfo.environment["WOLF_DATA"].map { URL(fileURLWithPath: $0) }
+        ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/WolfZhuyin")
+    let verbose = arguments.dropFirst().contains("-v")
+    let typos = UserTypos(fileURL: directory.appendingPathComponent("typos.json")).all
+    var generic = 0, withHabits = 0
+    for (mistyped, intended) in typos.sorted(by: { $0.key < $1.key }) {
+        guard let target = intended.max(by: { $0.value < $1.value })?.key else { continue }
+        let expected = segmenter.segment(target).map(\.text).joined()
+        // 一般規則：不給個人紀錄。
+        let plain = segmenter.segment(mistyped).map(\.text).joined()
+        // 加上習慣：用「其他」紀錄算出來的習慣，不含這一筆本身，看它能不能類推到沒看過的錯。
+        var others = typos
+        others[mistyped] = nil
+        var personal = segmenter
+        personal.typos = UserTypos(corrections: others)
+        let habitual = personal.segment(mistyped).map(\.text).joined()
+        if plain == expected { generic += 1 }
+        if habitual == expected { withHabits += 1 }
+        if verbose { print("打錯 \(mistyped) → 想打 \(expected)：一般規則「\(plain)」、加上習慣「\(habitual)」") }
+    }
+    print("打錯紀錄 \(typos.count) 筆：一般規則修好 \(generic)，加上習慣（不含該筆本身）修好 \(withHabits)")
+
+    let history = UserHistory(fileURL: directory.appendingPathComponent("history.json")).all
+    var phrases = 0, phrasesCorrect = 0
+    for (context, followers) in history where context.count == 2 && !context.contains(where: \.isASCII) {
+        for (next, count) in followers where count >= UserHistory.minimumCount && !next.contains(where: \.isASCII) {
+            guard let outcome = evaluation.run(context + next) else { continue }
+            phrases += 1
+            if outcome.textCorrect { phrasesCorrect += 1 } else if verbose { print("用詞 \(outcome.expected) → \(outcome.actual)") }
+        }
+    }
+    print("常用詞組 \(phrases) 組（出現至少 \(UserHistory.minimumCount) 次）：沒有個人紀錄時轉換正確 \(phrasesCorrect)")
 
 case "stability":
     // 一鍵一鍵打評測句，列出已顯示的中文或英文後來又被改判的情況。

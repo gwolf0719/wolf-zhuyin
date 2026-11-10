@@ -3,12 +3,16 @@ CLT := /Library/Developer/CommandLineTools/Library/Developer
 TEST_FLAGS := -Xswiftc -F -Xswiftc $(CLT)/Frameworks -Xlinker -F -Xlinker $(CLT)/Frameworks \
 	-Xlinker -rpath -Xlinker $(CLT)/Frameworks -Xlinker -rpath -Xlinker $(CLT)/usr/lib
 
-.PHONY: test eval install e2e icon
+.PHONY: test eval install e2e icon personal
 test:
 	swift test $(TEST_FLAGS)
 
 eval:
 	swift run wolf eval Eval/dev.txt Eval/test.txt
+
+# 用本機的學習紀錄評測（打錯還原率、常用詞組）。紀錄只在這台電腦，不進版本庫。
+personal:
+	swift run -c release wolf personal
 
 install:
 	scripts/build-app.sh --install

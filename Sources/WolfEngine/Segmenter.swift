@@ -34,6 +34,10 @@ public struct Segmenter: Sendable {
         public var typoMissingTone = -2.5
         /// 修正「按到隔壁鍵」的代價。
         public var typoNeighbor = -4.0
+        /// 修正「多按一鍵」的代價。
+        public var typoExtraKey = -3.0
+        /// 修正「漏按介音（ㄧㄨㄩ）」的代價。
+        public var typoMissingMedial = -3.0
         /// 修正「使用者自己常犯的錯」的代價。
         public var typoPersonal = -0.5
         /// 修正後組成的詞至少要這麼常見才採用。
@@ -96,7 +100,8 @@ public struct Segmenter: Sendable {
         let penalty: Double
         /// 根據使用者自己更正過的紀錄修的：證據夠強，不必再靠旁邊的字成詞。
         var isPersonal = false
-        /// 順序顛倒、而且夾著數字或符號鍵（k27、ur8 ）：英文不會這樣打，證據夠強，單字也修。
+        /// 證據夠強，單字也修：順序顛倒又夾著數字或符號鍵（k27、ur8 ），英文不會這樣打；
+        /// 或是使用者習慣犯這一類的錯。
         var isStrong = false
     }
 
@@ -390,8 +395,10 @@ public struct Segmenter: Sendable {
             best[0][State(language: language, last: CharacterContext.sentenceStart)] = (0, nil, nil)
         }
 
+        // 每個位置可以解讀成哪些音節，同一次轉換裡會被不同起點的詞重複問到，算一次就好。
+        var options = [[SyllableOption]?](repeating: nil, count: keys.count + 1)
         for position in 0..<keys.count where !best[position].isEmpty {
-            for edge in edges(in: keys, from: position) {
+            for edge in edges(in: keys, from: position, options: &options) {
                 for (state, entry) in best[position] {
                     // 修正打錯的邊只能出現在中文語境：開頭、中文後面，或空白與標點後面。
                     // 緊接在英數字後面的不修，避免把英文字的後半段改成中文。
@@ -503,7 +510,7 @@ public struct Segmenter: Sendable {
         return forms
     }
 
-    private func edges(in keys: [Character], from start: Int) -> [Edge] {
+    private func edges(in keys: [Character], from start: Int, options cache: inout [[SyllableOption]?]) -> [Edge] {
         var result: [Edge] = []
 
         let key = keys[start]
@@ -542,7 +549,9 @@ public struct Segmenter: Sendable {
         for _ in 0..<Self.maxSyllablesPerWord where !chains.isEmpty {
             var extended: [Chain] = []
             for chain in chains {
-                for option in syllableOptions(in: keys, from: chain.ends.last ?? start) {
+                let position = chain.ends.last ?? start
+                if cache[position] == nil { cache[position] = syllableOptions(in: keys, from: position) }
+                for option in cache[position]! {
                     if option.penalty < 0, chain.penalty < 0 { continue }
                     var next = chain
                     next.reading += next.reading.isEmpty ? option.reading : "-" + option.reading
@@ -615,6 +624,7 @@ extension Segmenter {
         }
         if let exact = Dachen.syllable(in: keys, from: start) { add(exact.reading, exact.end, 0) }
         guard weights.typoTolerance else { return options }
+        let habits = typos?.habits ?? []
 
         // 使用者自己更正過兩次以上的錯：直接當成他想打的那個音節。
         if let typos {
@@ -642,9 +652,11 @@ extension Segmenter {
         for length in 2...4 where start + length <= keys.count {
             let range = start..<start + length
             let hasNonLetterSymbol = keys[range].contains { Dachen.isSymbolKey($0) && !$0.isLetter && Dachen.tones[$0] == nil }
-            guard keys[range].contains(where: isToneDigit) || (hasNonLetterSymbol && length == 4 && keys[range.upperBound - 1] == " "),
+            // 使用者習慣顛倒順序時，三個鍵加空白（8w ）也修。
+            let spaceToneAllowed = hasNonLetterSymbol && (length == 4 || habits.contains(.reordered))
+            guard keys[range].contains(where: isToneDigit) || (spaceToneAllowed && keys[range.upperBound - 1] == " "),
                   hasLetterSymbol(range), let reading = Dachen.syllable(fromUnordered: keys[range]) else { continue }
-            add(reading, range.upperBound, weights.typoOrder, isStrong: hasNonLetterSymbol)
+            add(reading, range.upperBound, weights.typoOrder, isStrong: hasNonLetterSymbol || habits.contains(.reordered))
         }
 
         // 2. 漏按聲調：2–3 個注音鍵後面緊接著一個打對的、帶數字聲調的音節。
@@ -667,6 +679,36 @@ extension Segmenter {
                 guard let syllable = Dachen.syllable(in: corrected, from: start), syllable.end - 1 > start + offset,
                       isToneDigit(keys[syllable.end - 1]), hasLetterSymbol(start..<syllable.end) else { continue }
                 add(syllable.reading, syllable.end, weights.typoNeighbor)
+            }
+        }
+
+        // 4. 多按一鍵：3–5 個鍵、以數字聲調結尾，拿掉其中一個字母鍵就照標準打法成立（urup4 → rup4）。
+        // 使用者習慣多按一鍵時，夾著數字或符號鍵、空白當一聲的（yl; ）也修。
+        for length in 3...5 where start + length <= keys.count {
+            let range = start..<start + length
+            let hasNonLetterSymbol = keys[range].contains { Dachen.isSymbolKey($0) && !$0.isLetter && Dachen.tones[$0] == nil }
+            let last = keys[range.upperBound - 1]
+            guard isToneDigit(last) || (last == " " && hasNonLetterSymbol && habits.contains(.extraKey)),
+                  hasLetterSymbol(range) else { continue }
+            // 只拿掉字母鍵：數字鍵可能是真的數字（3個、4點）。
+            for index in range.dropLast() where keys[index].isLetter {
+                var trimmed = Array(keys[range])
+                trimmed.remove(at: index - start)
+                guard let syllable = Dachen.syllable(in: trimmed, from: 0), syllable.end == trimmed.count else { continue }
+                add(syllable.reading, range.upperBound, weights.typoExtraKey, isStrong: habits.contains(.extraKey))
+            }
+        }
+
+        // 5. 漏按介音：聲母＋韻母＋數字聲調三個鍵，在聲母後面補上 ㄧ、ㄨ、ㄩ 就成立（ho4 → hjo4）。
+        // 兩個鍵的（s3、v3）不補，太像代號。
+        for length in 3...3 where start + length <= keys.count && isToneDigit(keys[start + length - 1]) {
+            let range = start..<start + length
+            guard hasLetterSymbol(range) else { continue }
+            for medial: Character in ["u", "j", "m"] {
+                var filled = Array(keys[range])
+                filled.insert(medial, at: 1)
+                guard let syllable = Dachen.syllable(in: filled, from: 0), syllable.end == filled.count else { continue }
+                add(syllable.reading, range.upperBound, weights.typoMissingMedial, isStrong: habits.contains(.missingKey))
             }
         }
         return options
