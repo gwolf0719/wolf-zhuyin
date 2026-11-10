@@ -71,6 +71,7 @@ let sharedSegmenter: Segmenter = {
     var segmenter = Segmenter(lexicon: try! Lexicon(contentsOf: lexiconURL))
     let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
     segmenter.userPhrases = UserPhrases(fileURL: support.appendingPathComponent("WolfZhuyin/user-phrases.json"))
+    segmenter.history = UserHistory(fileURL: support.appendingPathComponent("WolfZhuyin/history.json"))
     return segmenter
 }()
 

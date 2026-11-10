@@ -10,10 +10,10 @@ guard arguments.count == 3 else {
     print("用法：WolfE2E <按鍵> <期望文字>")
     exit(2)
 }
-/// 按鍵序列：一般字元照打，特殊鍵寫成 {enter} {down} {up} {left} {right} {esc} {delete}。
+/// 按鍵序列：一般字元照打，特殊鍵寫成 {enter} {down} {up} {left} {right} {esc} {delete} {tab}。
 enum Stroke { case character(Character), special(Int) }
 let specialKeys = ["enter": kVK_Return, "down": kVK_DownArrow, "up": kVK_UpArrow, "left": kVK_LeftArrow,
-                   "right": kVK_RightArrow, "esc": kVK_Escape, "delete": kVK_Delete]
+                   "right": kVK_RightArrow, "esc": kVK_Escape, "delete": kVK_Delete, "tab": kVK_Tab]
 var keys: [Stroke] = []
 var rest = Substring(arguments[1])
 while let first = rest.first {

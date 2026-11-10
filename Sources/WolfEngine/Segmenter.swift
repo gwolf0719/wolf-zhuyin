@@ -42,6 +42,8 @@ public struct Segmenter: Sendable {
     public let lexicon: Lexicon
     /// 使用者選過的字詞；有設定時，轉換與候選都優先採用。
     public var userPhrases: UserPhrases?
+    /// 使用者送出過的詞序；有設定時，預測優先參考它。
+    public var history: UserHistory?
     public let english: EnglishWords
     public var weights = Weights()
 
@@ -170,6 +172,57 @@ public struct Segmenter: Sendable {
             }
         }
         return result
+    }
+
+    /// 把轉換結果拆成一個個詞（給用詞紀錄用）：中文詞、英文字各算一個；標點與空白把句子切開。
+    public func sentences(_ input: String, afterChinese: Bool = true) -> [[String]] {
+        var result: [[String]] = [[]]
+        var literal = ""
+        func flushLiteral() {
+            if !literal.isEmpty { result[result.count - 1].append(literal) }
+            literal = ""
+        }
+        let keys = Array(input)
+        for piece in pieces(keys, afterChinese: afterChinese, showPending: false) {
+            let isLiteral = piece.keys.count == 1 && !keys[piece.keys.lowerBound].isASCII
+            let isWord = piece.reading != nil || (piece.language == .english && !piece.isRawKey && piece.text.allSatisfy(\.isLetter))
+            if isLiteral, piece.text.allSatisfy({ $0.isLetter }) {
+                // 從選字窗或預測選進來的字是一個一個存的，相連的併成一個詞。
+                literal += piece.text
+            } else if isWord {
+                flushLiteral()
+                result[result.count - 1].append(piece.text)
+            } else {
+                flushLiteral()
+                if piece.text != " " { result.append([]) }
+            }
+        }
+        flushLiteral()
+        return result.filter { !$0.isEmpty }
+    }
+
+    /// 預測接下來的內容，最可能的在前，最多 9 個。結尾必須是完整的詞（不是打到一半的音節、標點或空白）。
+    /// 使用者自己的用詞紀錄排前面；結尾是中文時再補上詞庫裡以它開頭的常見詞。
+    public func predictions(_ input: String, afterChinese: Bool = true) -> [String] {
+        let keys = Array(input)
+        let all = pieces(keys, afterChinese: afterChinese, showPending: true)
+        guard let last = all.last, !last.isPending, !last.isRawKey, last.text != " ",
+              let words = sentences(input, afterChinese: afterChinese).last, let lastWord = words.last,
+              last.text.last == lastWord.last else { return [] }
+        var result = history?.likely(after: words) ?? []
+
+        // 結尾連續的中文字：較長的前文比較準，排前面。
+        var tail = ""
+        for word in words.reversed() {
+            guard !word.allSatisfy(\.isASCII) else { break }
+            tail = word + tail
+        }
+        for length in stride(from: min(tail.count, 6), through: 2, by: -1) {
+            for rest in lexicon.continuations[String(tail.suffix(length))] ?? [] where !result.contains(rest) {
+                result.append(rest)
+            }
+        }
+        return Array(result.prefix(9))
     }
 
     /// 組字區要顯示的文字，以及游標可以停的位置（按鍵位置 ↔ 文字位置）。

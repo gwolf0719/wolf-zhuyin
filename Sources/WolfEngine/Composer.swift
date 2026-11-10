@@ -11,6 +11,7 @@ public struct Composer: Sendable {
         case backspace
         case escape
         case up, down, left, right
+        case tab
         /// 其他按鍵（Tab、快捷鍵）。
         case other
     }
@@ -24,21 +25,28 @@ public struct Composer: Sendable {
         public var marked: String
         /// 游標在組字區的第幾個字元後面。
         public var cursor: Int
+        /// 游標正對著的那個字（游標前面那一個單位）在組字區的範圍；按 ↓ 或退格會動到的就是它。
+        /// 游標在最前面時是空範圍。
+        public var focus: Range<Int>
         /// 選字窗目前這一頁的內容；空陣列表示不顯示選字窗。
         public var candidates: [String]
         /// 選字窗反白的是這一頁的第幾個。
         public var highlighted: Int
+        /// 最可能的後續內容，當作提示顯示；按 Tab 會列出所有預測，再用數字鍵或 Tab 選。nil 表示沒有預測。
+        public var prediction: String?
 
         public init(
             handled: Bool, commit: String? = nil, marked: String = "", cursor: Int? = nil,
-            candidates: [String] = [], highlighted: Int = 0
+            candidates: [String] = [], highlighted: Int = 0, prediction: String? = nil
         ) {
             self.handled = handled
             self.commit = commit
             self.marked = marked
             self.cursor = cursor ?? marked.count
+            self.focus = max(self.cursor - 1, 0)..<self.cursor
             self.candidates = candidates
             self.highlighted = highlighted
+            self.prediction = prediction
         }
     }
 
@@ -98,12 +106,50 @@ public struct Composer: Sendable {
             handled: handled, marked: layout.text,
             cursor: layout.stops.last { $0.key <= cursor }?.offset ?? 0
         )
+        result.focus = (layout.stops.last { $0.key < cursor }?.offset ?? 0)..<result.cursor
         if let panel {
             let pageStart = panel.highlighted / Self.pageSize * Self.pageSize
             result.candidates = panel.items[pageStart..<min(pageStart + Self.pageSize, panel.items.count)].map(\.text)
             result.highlighted = panel.highlighted - pageStart
+        } else {
+            result.prediction = currentPredictions.first
         }
         return result
+    }
+
+    /// 游標在結尾、選字窗沒開時才預測。
+    private var currentPredictions: [String] {
+        guard panel == nil, !keys.isEmpty, cursor == keys.count else { return [] }
+        return segmenter.predictions(String(keys), afterChinese: afterChinese)
+    }
+
+    /// 句末標點（。？！）一出現就把到那裡為止的內容送出，後面的留在組字區。
+    /// `.` 也是韻母ㄡ，所以要等它後面又打了一個鍵、仍然被當成句號時才算數；`?` `!` `>` 沒有歧義，立刻送出。
+    private mutating func autoCommit() -> Result {
+        guard panel == nil, cursor == keys.count else { return state() }
+        let layout = segmenter.layout(String(keys), afterChinese: afterChinese)
+        let characters = Array(layout.text)
+        var commitStop: (key: Int, offset: Int)?
+        for stop in layout.stops where stop.offset > 0 && "。？！".contains(characters[stop.offset - 1]) {
+            let key = keys[stop.key - 1]
+            let isAmbiguous = key == "."
+            if !isAmbiguous || stop.key < keys.count { commitStop = stop }
+        }
+        guard let commitStop else { return state() }
+        let committed = String(characters[..<commitStop.offset])
+        record(String(keys[..<commitStop.key]))
+        keys.removeFirst(commitStop.key)
+        cursor = keys.count
+        afterChinese = true
+        var result = state()
+        result.commit = committed
+        return result
+    }
+
+    /// 把送出的內容記進用詞紀錄。
+    private func record(_ committedKeys: String) {
+        guard let history = segmenter.history else { return }
+        for sentence in segmenter.sentences(committedKeys, afterChinese: afterChinese) { history.record(sentence) }
     }
 
     /// 把游標移到相鄰的可停位置（不停在一個字的按鍵中間）。
@@ -118,6 +164,7 @@ public struct Composer: Sendable {
 
     /// 送出一段文字並清空組字狀態。
     private mutating func commit(_ text: String, handled: Bool = true) -> Result {
+        record(String(keys))
         keys = []
         cursor = 0
         panel = nil
@@ -148,7 +195,17 @@ public struct Composer: Sendable {
             if keys.isEmpty, character == " " { return Result(handled: false) }
             keys.insert(character, at: cursor)
             cursor += 1
+            return autoCommit()
+        case .tab:
+            // 有預測就列出來（再按一次 Tab 選第一個，或按數字鍵選）；沒有就當一般按鍵，送出後交還給 app。
+            let predictions = currentPredictions
+            guard !predictions.isEmpty else { fallthrough }
+            panel = Panel(items: predictions.map { Item(text: $0, start: cursor) }, isSymbols: false)
             return state()
+        case .other:
+            // 先送出組字內容，再把按鍵交還給 app。
+            guard let text = flush() else { return Result(handled: false) }
+            return Result(handled: false, commit: text)
         case .enter:
             guard !keys.isEmpty else { return Result(handled: false) }
             return commit(text(of: keys))
@@ -177,10 +234,6 @@ public struct Composer: Sendable {
         case .up:
             // 組字中吃掉，以免游標跑出組字區。
             return keys.isEmpty ? Result(handled: false) : state()
-        case .other:
-            // 先送出組字內容，再把按鍵交還給 app。
-            guard let text = flush() else { return Result(handled: false) }
-            return Result(handled: false, commit: text)
         }
     }
 
@@ -210,7 +263,7 @@ public struct Composer: Sendable {
             let index = pageStart + character.wholeNumberValue! - 1
             guard current.items.indices.contains(index) else { return state() }
             chosen = current.items[index]
-        case .enter, .character(" "):
+        case .enter, .character(" "), .tab:
             chosen = current.items[current.highlighted]
         case .down:
             current.highlighted = min(current.highlighted + 1, current.items.count - 1)
@@ -234,7 +287,7 @@ public struct Composer: Sendable {
             keys.replaceSubrange(chosen.start..<cursor, with: Array(chosen.text))
             cursor = chosen.start + chosen.text.count
             panel = nil
-            return state()
+            return autoCommit()
         }
         panel = current
         return state()

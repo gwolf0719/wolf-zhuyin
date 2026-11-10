@@ -16,7 +16,9 @@ run() {
 }
 
 run 'su3cl3{enter}' '你好'
-run 'ji3m/4Mac283y4,hello world!{enter}' '我用Mac打字，hello world！'
+run 'ji3m/4Mac283y4,hello world!' '我用Mac打字，hello world！'
+run 'su3cl3?ji3' '你好？我'
+run '1j4cl3{tab}{enter}' '不好意思'
 run 'hello, world{enter}' 'hello, world'
 run 'su3cl' '你ㄏㄠ'
 run 'y94{down}1' '在'

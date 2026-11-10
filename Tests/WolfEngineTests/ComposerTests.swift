@@ -70,7 +70,7 @@ private func type(_ keys: String, then last: Composer.Key? = nil, composer: inou
 
 @Test func keysPassThroughWhenNotComposing() {
     var composer = Composer(segmenter: segmenter)
-    for key in [Composer.Key.character(" "), .enter, .backspace, .escape, .up, .down, .left, .right, .other] {
+    for key in [Composer.Key.character(" "), .enter, .backspace, .escape, .up, .down, .left, .right, .tab, .other] {
         #expect(composer.handle(key) == Composer.Result(handled: false, commit: nil, marked: ""))
     }
 }
@@ -84,7 +84,8 @@ private func type(_ keys: String, then last: Composer.Key? = nil, composer: inou
 /// 不變式：不管怎麼按，送出的文字加上組字區，等於把「還留著的按鍵」整段轉換的結果；Enter 後一定清空。
 @Test func randomKeystrokesNeverLoseText() {
     var generator = SystemRandomNumberGenerator()
-    let alphabet = Array("abcdefghijklmnopqrstuvwxyz0123456789 ,./;-")
+    // 不含句點：句末標點會自動送出，那個行為另有測試。
+    let alphabet = Array("abcdefghijklmnopqrstuvwxyz0123456789 ,/;-")
     for _ in 0..<300 {
         var composer = Composer(segmenter: segmenter)
         var buffer = ""
@@ -109,10 +110,10 @@ private func type(_ keys: String, then last: Composer.Key? = nil, composer: inou
 @Test func punctuationAfterCommitFollowsCommittedText() {
     var composer = Composer(segmenter: segmenter)
     _ = type("hello", then: .enter, composer: &composer)
-    #expect(type("?", composer: &composer).marked == "?")
+    #expect(type(",", composer: &composer).marked == ",")
     _ = composer.handle(.escape)
     _ = type("su3cl3", then: .enter, composer: &composer)
-    #expect(type("?", composer: &composer).marked == "？")
+    #expect(type(",", composer: &composer).marked == "，")
 }
 
 /// 打到一半的音節在組字區顯示注音符號，但送出時是原本按的鍵。
@@ -173,8 +174,8 @@ private func type(_ keys: String, then last: Composer.Key? = nil, composer: inou
     _ = type("su3cl3", composer: &composer)
     let opened = composer.handle(.character("\\"))
     #expect(opened.candidates == Array(Composer.chineseSymbols.prefix(Composer.pageSize)))
-    #expect(composer.handle(.character("4")).marked == "你好？")
-    #expect(composer.handle(.enter).commit == "你好？")
+    // 選到句末標點，整句直接送出。
+    #expect(composer.handle(.character("4")) == Composer.Result(handled: true, commit: "你好？"))
 
     // 英文語境給半形符號。
     _ = type("hello", composer: &composer)
@@ -296,4 +297,144 @@ private func type(_ keys: String, then last: Composer.Key? = nil, composer: inou
             #expect((0...result.marked.count).contains(result.cursor), "按鍵 \(key)")
         }
     }
+}
+
+/// 句末標點一出現就送出，不用按 Enter。
+@Test func sentenceEndingPunctuationCommitsAutomatically() {
+    var composer = Composer(segmenter: segmenter)
+    // ? ! 沒有歧義，立刻送出。
+    #expect(type("su3cl3", composer: &composer).marked == "你好")
+    #expect(composer.handle(.character("?")) == Composer.Result(handled: true, commit: "你好？"))
+    _ = type("cl3", composer: &composer)
+    #expect(composer.handle(.character("!")).commit == "好！")
+    // Shift+. 也立刻送出。
+    _ = type("cl3", composer: &composer)
+    #expect(composer.handle(.character(">")).commit == "好。")
+
+    // . 也是韻母ㄡ：先顯示句號但不送，下一個鍵確定它是句號才送，後面的字留在組字區。
+    let waiting = type("cl3.", composer: &composer)
+    #expect(waiting.marked == "好。")
+    #expect(waiting.committed == "")
+    let next = composer.handle(.character("j"))
+    #expect(next.commit == "好。")
+    #expect(next.marked == "ㄨ")
+    _ = composer.handle(.escape)
+    // 結果是ㄡ開頭的字（偶）就不是句號，不送出。
+    let ou = type("cl3.3", composer: &composer)
+    #expect(ou.marked == "好偶")
+    #expect(ou.committed == "")
+    _ = composer.handle(.escape)
+
+    // 逗號、頓號不送出；英文的句點、問號也不送出。
+    #expect(type("cl3,", composer: &composer).committed == "")
+    _ = composer.handle(.escape)
+    let english = type("hello world. ok?", composer: &composer)
+    #expect(english.committed == "")
+    #expect(english.marked == "hello world. ok?")
+}
+
+@Test func tabAcceptsPredictionFromLexicon() {
+    var composer = Composer(segmenter: segmenter)
+    // 詞庫裡「不好」最常見的後續是「意思」。
+    let typed = composer.handle(.character("1"))
+    #expect(typed.prediction == nil)
+    _ = composer.handle(.escape)
+    var last = Composer.Result(handled: false)
+    for key in "1j4cl3" { last = composer.handle(.character(key)) }
+    #expect(last.marked == "不好")
+    #expect(last.prediction == "意思")
+    // Tab 列出所有預測；再按一次 Tab 選第一個。
+    let opened = composer.handle(.tab)
+    #expect(opened.handled)
+    #expect(opened.candidates.first == "意思")
+    #expect(opened.candidates.count > 1)
+    #expect(composer.handle(.tab).marked == "不好意思")
+    #expect(composer.handle(.enter).commit == "不好意思")
+
+    // 數字鍵選其他的預測。
+    for key in "1j4cl3" { last = composer.handle(.character(key)) }
+    let list = composer.handle(.tab).candidates
+    #expect(composer.handle(.character("2")).marked == "不好" + list[1])
+    _ = composer.handle(.escape)
+    // Esc 關掉預測清單，組字內容不變。
+    for key in "1j4cl3" { last = composer.handle(.character(key)) }
+    _ = composer.handle(.tab)
+    let closed = composer.handle(.escape)
+    #expect(closed.candidates.isEmpty)
+    #expect(closed.marked == "不好")
+}
+
+@Test func tabPassesThroughWithoutPrediction() {
+    var composer = Composer(segmenter: segmenter)
+    // 英文、打到一半的音節都不預測；Tab 送出內容後交還給 app。
+    #expect(type("hello", composer: &composer).marked == "hello")
+    #expect(composer.handle(.tab) == Composer.Result(handled: false, commit: "hello"))
+    for key in "su" { #expect(composer.handle(.character(key)).prediction == nil) }
+    _ = composer.handle(.escape)
+    // 游標不在結尾時不預測。
+    for key in "1j4cl3" { _ = composer.handle(.character(key)) }
+    #expect(composer.handle(.left).prediction == nil)
+}
+
+/// 自己打過的詞序優先於詞庫，而且只記在指定的地方。
+@Test func predictionLearnsFromWhatWasTyped() throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("wolf-test-\(UUID().uuidString)/history.json")
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    var learning = segmenter
+    learning.history = UserHistory(fileURL: url)
+    var composer = Composer(segmenter: learning)
+
+    // 打過兩次「不好吃」之後，「不好」後面推薦「吃」而不是詞庫的「意思」。
+    for _ in 0..<2 {
+        _ = type("1j4cl3t ", then: .enter, composer: &composer)
+    }
+    var last = Composer.Result(handled: false)
+    for key in "1j4cl3" { last = composer.handle(.character(key)) }
+    #expect(last.prediction == "吃")
+    // 自己的用詞排第一，詞庫的排後面。
+    let opened = composer.handle(.tab)
+    #expect(opened.candidates.first == "吃")
+    #expect(opened.candidates.contains("意思"))
+    #expect(composer.handle(.tab).marked == "不好吃")
+    _ = composer.handle(.escape)
+
+    // 重新載入後還在。
+    #expect(UserHistory(fileURL: url).likely(after: ["不好"]).first == "吃")
+    // 沒設定紀錄的引擎不受影響。
+    var plain = Composer(segmenter: segmenter)
+    for key in "1j4cl3" { last = plain.handle(.character(key)) }
+    #expect(last.prediction == "意思")
+}
+
+@Test func historySplitsSentencesAtPunctuation() {
+    #expect(segmenter.sentences("ji3m/4Mac283y4,hello world") == [["我", "用", "Mac", "打字"], ["hello", "world"]])
+}
+
+@Test func historyUsesTwoCharactersOfContextAndNeedsRepetition() {
+    let history = UserHistory()
+    history.record(["我", "用", "Mac", "打字"])
+    // 只出現一次不預測。
+    #expect(history.likely(after: ["我", "用", "Mac"]).isEmpty)
+    history.record(["他", "用", "Mac", "打字"])
+    #expect(history.likely(after: ["他", "用", "Mac"]) == ["打字"])
+    // 中文用最後兩個字當前文：「我用」只出現一次，退到「用」出現兩次。
+    #expect(history.likely(after: ["我", "用"]) == ["Mac"])
+    #expect(history.likely(after: ["沒看過"]).isEmpty)
+}
+
+/// 游標正對著的字要標得出來：就是游標前面那一個單位。
+@Test func focusFollowsTheCharacterBeforeCursor() {
+    var composer = Composer(segmenter: segmenter)
+    var last = Composer.Result(handled: false)
+    for key in "ji3y94ru8 " { last = composer.handle(.character(key)) }
+    #expect(last.marked == "我在家")
+    #expect(last.focus == 2..<3)
+    #expect(composer.handle(.left).focus == 1..<2)
+    #expect(composer.handle(.left).focus == 0..<1)
+    #expect(composer.handle(.left).focus.isEmpty)
+    // 打到一半的音節整個是一個單位。
+    _ = composer.handle(.escape)
+    for key in "ji3su" { last = composer.handle(.character(key)) }
+    #expect(last.marked == "我ㄋㄧ")
+    #expect(last.focus == 1..<3)
 }

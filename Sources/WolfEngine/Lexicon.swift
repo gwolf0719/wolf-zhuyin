@@ -18,6 +18,11 @@ public struct Lexicon: Sendable {
     public private(set) var syllables: Set<String> = []
     /// 所有音節去掉聲調後的每一種開頭（ㄋ、ㄋㄧ、ㄋㄧㄠ…），用來判斷「打到一半的音節」。
     public private(set) var syllablePrefixes: Set<String> = []
+    /// 詞的開頭 → 常見的後續，最常見的在前（「不好」→「意思」…），給預測用。開頭至少兩個字。
+    public private(set) var continuations: [String: [String]] = [:]
+    private static let continuationsPerPrefix = 6
+    /// 當後續沒有意義的字：幾乎什麼詞後面都能接，推薦了等於沒推薦。
+    private static let weakContinuations: Set<String> = ["的", "了", "是", "在", "有", "和", "與", "及", "人", "說", "來", "去", "用", "會", "要", "到", "上", "中", "裡"]
     /// 詞 → 最常見的讀音（評測時把文字轉回按鍵用）。
     private(set) var readings: [String: (reading: String, score: Double)] = [:]
 
@@ -36,6 +41,19 @@ public struct Lexicon: Sendable {
             for syllable in fields[0].split(separator: "-") {
                 syllables.insert(String(syllable))
             }
+        }
+        var found: [String: [(rest: String, score: Double)]] = [:]
+        for (text, entry) in readings where text.count >= 3 {
+            let characters = Array(text)
+            for length in 2..<characters.count {
+                let rest = String(characters[length...])
+                guard !Self.weakContinuations.contains(rest) else { continue }
+                found[String(characters[..<length]), default: []].append((rest, entry.score))
+            }
+        }
+        continuations = found.mapValues { options in
+            // 分數相同時照字典序，讓結果固定。
+            options.sorted { ($0.score, $1.rest) > ($1.score, $0.rest) }.prefix(Self.continuationsPerPrefix).map(\.rest)
         }
         for syllable in syllables {
             let symbols = syllable.filter { !"ˊˇˋ˙".contains($0) }

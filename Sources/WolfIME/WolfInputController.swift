@@ -35,17 +35,20 @@ final class WolfInputController: IMKInputController {
         let cursorLocation = String(result.marked.prefix(result.cursor)).utf16.count
         if result.handled {
             client.setMarkedText(
-                result.marked,
+                Self.markedText(for: result),
                 selectionRange: NSRange(location: cursorLocation, length: 0),
                 replacementRange: Self.noReplacement
             )
         }
-        if result.candidates.isEmpty {
+        if result.candidates.isEmpty, let prediction = result.prediction {
+            CandidatePanel.shared.show(prediction: prediction, near: Self.cursorRect(in: client, at: cursorLocation))
+        } else if result.candidates.isEmpty {
             CandidatePanel.shared.hide()
         } else {
-            var cursor = NSRect.zero
-            client.attributes(forCharacterIndex: cursorLocation, lineHeightRectangle: &cursor)
-            CandidatePanel.shared.show(candidates: result.candidates, highlighted: result.highlighted, near: cursor)
+            CandidatePanel.shared.show(
+                candidates: result.candidates, highlighted: result.highlighted,
+                near: Self.cursorRect(in: client, at: cursorLocation)
+            )
         }
         return result.handled
     }
@@ -63,12 +66,38 @@ final class WolfInputController: IMKInputController {
         }
     }
 
+    /// 組字區的樣式：整段細底線，游標正對著的那個字用粗底線，一眼看得出現在改的是哪個字。
+    private static func markedText(for result: Composer.Result) -> NSAttributedString {
+        let text = NSMutableAttributedString(string: result.marked)
+        let whole = NSRange(location: 0, length: text.length)
+        text.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: whole)
+        text.addAttribute(.markedClauseSegment, value: 0, range: whole)
+        guard !result.focus.isEmpty else { return text }
+        let start = String(result.marked.prefix(result.focus.lowerBound)).utf16.count
+        let end = String(result.marked.prefix(result.focus.upperBound)).utf16.count
+        let focus = NSRange(location: start, length: end - start)
+        text.addAttribute(.underlineStyle, value: NSUnderlineStyle.thick.rawValue, range: focus)
+        text.addAttribute(.markedClauseSegment, value: 1, range: focus)
+        return text
+    }
+
+    /// 游標在螢幕上的位置。組字區結尾那個位置很多 app 不回報，所以改問前一個字，再不行就問開頭。
+    private static func cursorRect(in client: IMKTextInput, at location: Int) -> NSRect {
+        for index in [max(location - 1, 0), 0] {
+            var rect = NSRect.zero
+            client.attributes(forCharacterIndex: index, lineHeightRectangle: &rect)
+            if rect != .zero { return rect }
+        }
+        return .zero
+    }
+
     private static func key(for event: NSEvent) -> Composer.Key {
         if !event.modifierFlags.intersection([.command, .control, .option]).isEmpty { return .other }
         switch Int(event.keyCode) {
         case kVK_Return, kVK_ANSI_KeypadEnter: return .enter
         case kVK_Delete: return .backspace
         case kVK_Escape: return .escape
+        case kVK_Tab: return event.modifierFlags.contains(.shift) ? .other : .tab
         case kVK_UpArrow: return .up
         case kVK_DownArrow: return .down
         case kVK_LeftArrow: return .left

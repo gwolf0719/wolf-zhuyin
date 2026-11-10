@@ -41,9 +41,20 @@ final class CandidatePanel: NSPanel {
 
     /// - Parameter cursor: 組字游標在螢幕上的位置（左下角原點）。
     func show(candidates: [String], highlighted: Int, near cursor: NSRect) {
+        let rows = candidates.enumerated().map { index, candidate in
+            CandidateRow(label: "\(index + 1)", text: candidate, isHighlighted: index == highlighted)
+        }
+        show(rows, near: cursor)
+    }
+
+    /// 預測提示：一列「⇥ 後續內容」，不反白，表示按 Tab 才會採用。
+    func show(prediction: String, near cursor: NSRect) {
+        show([CandidateRow(label: "⇥", text: prediction, isHighlighted: false, isHint: true)], near: cursor)
+    }
+
+    private func show(_ rows: [CandidateRow], near cursor: NSRect) {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        for (index, candidate) in candidates.enumerated() {
-            let row = CandidateRow(number: index + 1, text: candidate, isHighlighted: index == highlighted)
+        for row in rows {
             stack.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -10).isActive = true
         }
@@ -66,19 +77,19 @@ final class CandidatePanel: NSPanel {
 }
 
 private final class CandidateRow: NSView {
-    init(number: Int, text: String, isHighlighted: Bool) {
+    init(label: String, text: String, isHighlighted: Bool, isHint: Bool = false) {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = 5
         layer?.backgroundColor = isHighlighted ? NSColor.selectedContentBackgroundColor.cgColor : nil
 
-        let numberLabel = NSTextField(labelWithString: "\(number)")
+        let numberLabel = NSTextField(labelWithString: label)
         numberLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
         numberLabel.textColor = isHighlighted ? NSColor.white.withAlphaComponent(0.8) : .secondaryLabelColor
 
         let textLabel = NSTextField(labelWithString: text)
         textLabel.font = .systemFont(ofSize: 18)
-        textLabel.textColor = isHighlighted ? .white : .labelColor
+        textLabel.textColor = isHighlighted ? .white : isHint ? .secondaryLabelColor : .labelColor
 
         let row = NSStackView(views: [numberLabel, textLabel])
         row.orientation = .horizontal
