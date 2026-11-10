@@ -16,13 +16,7 @@ install:
 # 在真實文字視窗裡切到已安裝的狼注音並送按鍵。需要先把狼注音加入輸入方式。
 e2e:
 	swift build --product WolfE2E
-	.build/debug/WolfE2E "su3cl3{enter}" "你好"
-	.build/debug/WolfE2E "ji3m/4Mac283y4,hello world!{enter}" "我用Mac打字，hello world！"
-	.build/debug/WolfE2E "hello, world{enter}" "hello, world"
-	.build/debug/WolfE2E "su3cl" "你ㄏㄠ"
-	.build/debug/WolfE2E "y94{down}1" "在"
-	.build/debug/WolfE2E "su3cl3\\4" "你好？"
-	.build/debug/WolfE2E "C:\\\\Users{enter}" "C:\\Users"
+	scripts/e2e.sh
 
 # 母圖換了之後重新產生選單列圖示。
 icon:

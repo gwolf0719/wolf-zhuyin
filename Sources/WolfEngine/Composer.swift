@@ -1,5 +1,8 @@
 /// 組字狀態機：輸入法外殼把按鍵事件轉成 `Key` 丟進來，照回傳結果更新畫面。
 /// 與 InputMethodKit 無關，所以可以直接用測試驗證打字行為。
+///
+/// 緩衝 `keys` 裡有兩種字元：ASCII 是使用者按的鍵，每次都重新轉換；
+/// 非 ASCII 是已經定案的文字（從選字窗或符號表選的），原樣輸出、不再變動。
 public struct Composer: Sendable {
     public enum Key: Sendable, Equatable {
         /// 可印出的 ASCII 字元（含空白）。
@@ -19,15 +22,21 @@ public struct Composer: Sendable {
         public var commit: String?
         /// 送出之後組字區應顯示的內容（空字串表示沒有在組字）。
         public var marked: String
+        /// 游標在組字區的第幾個字元後面。
+        public var cursor: Int
         /// 選字窗目前這一頁的內容；空陣列表示不顯示選字窗。
         public var candidates: [String]
         /// 選字窗反白的是這一頁的第幾個。
         public var highlighted: Int
 
-        public init(handled: Bool, commit: String? = nil, marked: String = "", candidates: [String] = [], highlighted: Int = 0) {
+        public init(
+            handled: Bool, commit: String? = nil, marked: String = "", cursor: Int? = nil,
+            candidates: [String] = [], highlighted: Int = 0
+        ) {
             self.handled = handled
             self.commit = commit
             self.marked = marked
+            self.cursor = cursor ?? marked.count
             self.candidates = candidates
             self.highlighted = highlighted
         }
@@ -42,7 +51,7 @@ public struct Composer: Sendable {
 
     private struct Item: Sendable {
         let text: String
-        /// 取代組字內容中從這個按鍵位置到結尾的部分；符號是接在全部內容後面。
+        /// 取代緩衝中從這個位置到游標的部分。
         let start: Int
         /// 候選字的讀音；符號沒有。
         var reading: String? = nil
@@ -65,7 +74,9 @@ public struct Composer: Sendable {
     ]
 
     private let segmenter: Segmenter
-    private var keys = ""
+    private var keys: [Character] = []
+    /// 游標在 `keys` 的哪個位置（0...keys.count）。
+    private var cursor = 0
     /// 上一次送出的文字是否以中文結尾；決定下一段開頭的標點用全形還是半形。
     private var afterChinese = true
     private var panel: Panel?
@@ -74,13 +85,19 @@ public struct Composer: Sendable {
         self.segmenter = segmenter
     }
 
-    private func text(of keys: String, showPending: Bool = false) -> String {
-        segmenter.segment(keys, afterChinese: afterChinese, showPending: showPending).map(\.text).joined()
+    private func text(of keys: some Sequence<Character>) -> String {
+        segmenter.segment(String(keys), afterChinese: afterChinese).map(\.text).joined()
     }
 
+    private var beforeCursor: String { String(keys[..<cursor]) }
+
     /// 目前畫面該有的樣子。
-    private func state(handled: Bool = true, commit: String? = nil) -> Result {
-        var result = Result(handled: handled, commit: commit, marked: text(of: keys, showPending: true))
+    private func state(handled: Bool = true) -> Result {
+        let layout = segmenter.layout(String(keys), afterChinese: afterChinese)
+        var result = Result(
+            handled: handled, marked: layout.text,
+            cursor: layout.stops.last { $0.key <= cursor }?.offset ?? 0
+        )
         if let panel {
             let pageStart = panel.highlighted / Self.pageSize * Self.pageSize
             result.candidates = panel.items[pageStart..<min(pageStart + Self.pageSize, panel.items.count)].map(\.text)
@@ -89,9 +106,20 @@ public struct Composer: Sendable {
         return result
     }
 
+    /// 把游標移到相鄰的可停位置（不停在一個字的按鍵中間）。
+    private mutating func move(_ direction: Key) {
+        let stops = segmenter.layout(String(keys), afterChinese: afterChinese).stops.map(\.key)
+        switch direction {
+        case .left: cursor = stops.last { $0 < cursor } ?? 0
+        case .right: cursor = stops.first { $0 > cursor } ?? keys.count
+        default: break
+        }
+    }
+
     /// 送出一段文字並清空組字狀態。
     private mutating func commit(_ text: String, handled: Bool = true) -> Result {
-        keys = ""
+        keys = []
+        cursor = 0
         panel = nil
         if let last = text.last { afterChinese = !last.isASCII }
         return Result(handled: handled, commit: text)
@@ -111,36 +139,43 @@ public struct Composer: Sendable {
 
         switch key {
         case .character(Self.symbolKey):
-            let committedSoFar = text(of: keys)
-            let chinese = committedSoFar.last.map { !$0.isASCII } ?? afterChinese
+            let chinese = text(of: keys[..<cursor]).last.map { !$0.isASCII } ?? afterChinese
             let symbols = chinese ? Self.chineseSymbols : Self.englishSymbols
-            panel = Panel(items: symbols.map { Item(text: $0, start: keys.count) }, isSymbols: true)
+            panel = Panel(items: symbols.map { Item(text: $0, start: cursor) }, isSymbols: true)
             return state()
         case .character(let character):
             // 沒在組字時，空白就是空白。
             if keys.isEmpty, character == " " { return Result(handled: false) }
-            keys.append(character)
+            keys.insert(character, at: cursor)
+            cursor += 1
             return state()
         case .enter:
             guard !keys.isEmpty else { return Result(handled: false) }
             return commit(text(of: keys))
         case .backspace:
             guard !keys.isEmpty else { return Result(handled: false) }
-            keys.removeLast()
+            let length = min(cursor, max(1, segmenter.backspaceLength(beforeCursor, afterChinese: afterChinese)))
+            keys.removeSubrange(cursor - length..<cursor)
+            cursor -= length
             return state()
         case .escape:
             guard !keys.isEmpty else { return Result(handled: false) }
-            keys = ""
+            keys = []
+            cursor = 0
             return state()
         case .down:
             guard !keys.isEmpty else { return Result(handled: false) }
-            let candidates = segmenter.candidates(keys, afterChinese: afterChinese)
+            let candidates = segmenter.candidates(beforeCursor, afterChinese: afterChinese)
             if !candidates.isEmpty {
                 panel = Panel(items: candidates.map { Item(text: $0.text, start: $0.start, reading: $0.reading) }, isSymbols: false)
             }
             return state()
-        case .up, .left, .right:
-            // 組字中先不支援移動游標，吃掉按鍵以免游標跑出組字區。
+        case .left, .right:
+            guard !keys.isEmpty else { return Result(handled: false) }
+            move(key)
+            return state()
+        case .up:
+            // 組字中吃掉，以免游標跑出組字區。
             return keys.isEmpty ? Result(handled: false) : state()
         case .other:
             // 先送出組字內容，再把按鍵交還給 app。
@@ -166,21 +201,17 @@ public struct Composer: Sendable {
         guard var current = panel else { return nil }
         let pageStart = current.highlighted / Self.pageSize * Self.pageSize
 
-        func select(_ index: Int) -> Item? {
-            current.items.indices.contains(index) ? current.items[index] : nil
-        }
         var chosen: Item?
         switch key {
         case .character(Self.symbolKey) where current.isSymbols:
             // 連按兩下：輸出這個字元本身。
-            panel = nil
-            keys.append(Self.symbolKey)
-            return state()
+            chosen = Item(text: String(Self.symbolKey), start: cursor)
         case .character(let character) where ("1"..."9").contains(character):
-            guard let item = select(pageStart + character.wholeNumberValue! - 1) else { return state() }
-            chosen = item
+            let index = pageStart + character.wholeNumberValue! - 1
+            guard current.items.indices.contains(index) else { return state() }
+            chosen = current.items[index]
         case .enter, .character(" "):
-            chosen = select(current.highlighted)
+            chosen = current.items[current.highlighted]
         case .down:
             current.highlighted = min(current.highlighted + 1, current.items.count - 1)
         case .up:
@@ -198,9 +229,12 @@ public struct Composer: Sendable {
         }
 
         if let chosen {
-            let prefix = String(keys.prefix(chosen.start))
-            learn(chosen, after: prefix)
-            return commit(text(of: prefix) + chosen.text)
+            // 選定的文字直接寫進緩衝，取代原本那幾個按鍵；之後不再被重新轉換。
+            learn(chosen, after: String(keys[..<chosen.start]))
+            keys.replaceSubrange(chosen.start..<cursor, with: Array(chosen.text))
+            cursor = chosen.start + chosen.text.count
+            panel = nil
+            return state()
         }
         panel = current
         return state()

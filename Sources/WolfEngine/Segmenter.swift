@@ -70,6 +70,10 @@ public struct Segmenter: Sendable {
         let keys: Range<Int>
         var text: String
         var reading: String?
+        /// 無法解讀、原樣輸出的單一按鍵。
+        var isRawKey = false
+        /// 結尾打到一半的音節。
+        var isPending = false
     }
 
     public struct Candidate: Sendable, Equatable {
@@ -149,6 +153,57 @@ public struct Segmenter: Sendable {
         return result
     }
 
+    /// 組字區要顯示的文字，以及游標可以停的位置（按鍵位置 ↔ 文字位置）。
+    /// 中文一個字停一次、英文一個字母停一次，不會停在一個字的按鍵中間。
+    public func layout(_ input: String, afterChinese: Bool = true) -> (text: String, stops: [(key: Int, offset: Int)]) {
+        let keys = Array(input)
+        var text = ""
+        var stops = [(key: 0, offset: 0)]
+        for piece in pieces(keys, afterChinese: afterChinese, showPending: true) {
+            let base = text.count
+            text += piece.text
+            if let reading = piece.reading, reading.split(separator: "-").count == piece.text.count {
+                var position = piece.keys.lowerBound
+                for index in 1...piece.text.count {
+                    guard let syllable = Dachen.syllable(in: keys, from: position) else { break }
+                    position = syllable.end
+                    stops.append((position, base + index))
+                }
+            } else if piece.language == .english, piece.keys.count == piece.text.count {
+                for index in 1...piece.text.count { stops.append((piece.keys.lowerBound + index, base + index)) }
+            }
+            if stops.last?.key != piece.keys.upperBound { stops.append((piece.keys.upperBound, text.count)) }
+        }
+        return (text, stops)
+    }
+
+    /// 按一次退格該刪掉結尾幾個按鍵。以「畫面上的一個單位」為準：
+    /// - 打到一半的音節：一個注音符號。
+    /// - 已完成的中文字：整個字（含聲調）。
+    /// - 沒被認出來的一串按鍵（多半是注音打錯）：整串。判斷依據是裡面有數字或注音用到的符號鍵；
+    ///   純字母的不算，那可能是詞表沒收的英文字，照一般習慣一次刪一個字母。
+    /// - 其他（英文字、標點、空白）：一個字元。
+    public func backspaceLength(_ input: String, afterChinese: Bool = true) -> Int {
+        let keys = Array(input)
+        let all = pieces(keys, afterChinese: afterChinese, showPending: true)
+        guard let last = all.last else { return 0 }
+        if last.isPending { return 1 }
+        if let reading = last.reading {
+            var position = last.keys.lowerBound
+            var lastSyllableStart = position
+            for _ in reading.split(separator: "-") {
+                guard let syllable = Dachen.syllable(in: keys, from: position) else { break }
+                lastSyllableStart = position
+                position = syllable.end
+            }
+            return keys.count - lastSyllableStart
+        }
+        guard last.isRawKey, keys[last.keys.lowerBound] != " " else { return 1 }
+        let run = all.reversed().prefix { $0.isRawKey && keys[$0.keys.lowerBound] != " " }
+        let looksLikeMistypedZhuyin = run.contains { !keys[$0.keys.lowerBound].isLetter }
+        return looksLikeMistypedZhuyin ? run.count : 1
+    }
+
     func pieces(_ keys: [Character], afterChinese: Bool, showPending: Bool) -> [Piece] {
         guard !keys.isEmpty else { return [] }
 
@@ -188,7 +243,7 @@ public struct Segmenter: Sendable {
             // 結尾是打到一半的音節：前面照常處理，結尾顯示注音符號。
             let head = Array(path.prefix { $0.start < pending.start })
             var result = resolve(head, afterChinese: afterChinese)
-            result.append(Piece(language: .chinese, keys: pending.start..<keys.count, text: pending.symbols))
+            result.append(Piece(language: .chinese, keys: pending.start..<keys.count, text: pending.symbols, isPending: true))
             return result
         }
         return resolve(path, afterChinese: afterChinese)
@@ -197,7 +252,10 @@ public struct Segmenter: Sendable {
     private func resolve(_ path: [Edge], afterChinese: Bool) -> [Piece] {
         let fullWidth = punctuationForms(in: path, afterChinese: afterChinese)
         return path.enumerated().map { index, edge in
-            var piece = Piece(language: edge.language, keys: edge.start..<edge.end, text: edge.text, reading: edge.reading)
+            var piece = Piece(
+                language: edge.language, keys: edge.start..<edge.end, text: edge.text,
+                reading: edge.reading, isRawKey: edge.isRawKey
+            )
             if let key = edge.punctuation {
                 piece.language = fullWidth[index] ? .chinese : .english
                 piece.text = String(fullWidth[index] ? Self.fullWidthPunctuation[key]! : key)
@@ -260,8 +318,13 @@ public struct Segmenter: Sendable {
     private func edges(in keys: [Character], from start: Int) -> [Edge] {
         var result: [Edge] = []
 
-        // 原樣輸出：保證任何輸入都有路可走。
         let key = keys[start]
+        // 非 ASCII 是已經定案的文字（選字窗或符號表選的），原樣輸出，也不讓其他邊跨過它。
+        if !key.isASCII {
+            return [Edge(start: start, end: start + 1, language: .chinese, text: String(key), score: 0)]
+        }
+
+        // 原樣輸出：保證任何輸入都有路可走。
         if let fullWidth = Self.fullWidthPunctuation[key] {
             // 兩條同分的邊，分別接在中文與英文狀態後面，讓標點不影響兩側的語言判斷。
             for language in [Language.chinese, .english] {

@@ -31,10 +31,12 @@ final class WolfInputController: IMKInputController {
         if let text = result.commit {
             client.insertText(text, replacementRange: Self.noReplacement)
         }
+        // 游標位置換算成 UTF-16 長度（系統文字 API 的單位）。
+        let cursorLocation = String(result.marked.prefix(result.cursor)).utf16.count
         if result.handled {
             client.setMarkedText(
                 result.marked,
-                selectionRange: NSRange(location: result.marked.utf16.count, length: 0),
+                selectionRange: NSRange(location: cursorLocation, length: 0),
                 replacementRange: Self.noReplacement
             )
         }
@@ -42,7 +44,7 @@ final class WolfInputController: IMKInputController {
             CandidatePanel.shared.hide()
         } else {
             var cursor = NSRect.zero
-            client.attributes(forCharacterIndex: 0, lineHeightRectangle: &cursor)
+            client.attributes(forCharacterIndex: cursorLocation, lineHeightRectangle: &cursor)
             CandidatePanel.shared.show(candidates: result.candidates, highlighted: result.highlighted, near: cursor)
         }
         return result.handled

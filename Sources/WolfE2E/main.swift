@@ -29,6 +29,23 @@ let expected = arguments[2]
 // 系統實際給的識別碼會多一段 bundle 名稱（小麥注音也是這樣）。
 let modeID = ProcessInfo.processInfo.environment["WOLF_E2E_SOURCE"] ?? "tw.foso.inputmethod.WolfZhuyin.WolfZhuyin.Zhuyin"
 
+/// 結束碼 75：沒有測（使用者正在用電腦，或測試途中被打斷），不算通過也不算失敗。
+let skipped: Int32 = 75
+
+// 測試視窗會搶走鍵盤焦點。使用者正在打字或用滑鼠時不跑，等到閒置 3 秒；等不到就略過。
+func idleSeconds() -> Double {
+    CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+}
+var waited = 0.0
+while idleSeconds() < 3 {
+    guard waited < 20 else {
+        print("略過：使用者正在操作電腦，不搶焦點（按鍵「\(arguments[1])」未測）")
+        exit(skipped)
+    }
+    Thread.sleep(forTimeInterval: 0.5)
+    waited += 0.5
+}
+
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
 
@@ -46,8 +63,22 @@ app.activate(ignoringOtherApps: true)
 
 let originalSource = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
 
+// 測試途中使用者按了鍵或把焦點切走，結果就不可信。
+var interrupted = false
+NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown]) { event in
+    interrupted = true
+    return event
+}
+NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: nil) { _ in
+    interrupted = true
+}
+
 func finish(_ message: String, code: Int32) -> Never {
     TISSelectInputSource(originalSource)
+    if interrupted, code != 0 {
+        print("略過：測試途中被使用者操作打斷（按鍵「\(arguments[1])」未測）")
+        exit(skipped)
+    }
     print(message)
     exit(code)
 }
