@@ -151,7 +151,7 @@ public struct Composer: Sendable {
     }
 
     /// 句末標點（。？！）一出現就把到那裡為止的內容送出，後面的留在組字區。
-    /// `.` 也是韻母ㄡ，所以要等它後面又打了一個鍵、仍然被當成句號時才算數；`?` `!` `>` 沒有歧義，立刻送出。
+    /// `.` 也是韻母ㄡ，所以要等它後面又打了一個鍵、仍然被當成句號，而且前面是中文字時才算數；`?` `!` `>` 沒有歧義，立刻送出。
     private mutating func autoCommit() -> Result {
         guard panel == nil, cursor == keys.count else { return state() }
         let layout = segmenter.layout(String(keys), afterChinese: afterChinese)
@@ -159,8 +159,15 @@ public struct Composer: Sendable {
         var commitStop: (key: Int, offset: Int)?
         for stop in layout.stops where stop.offset > 0 && "。？！".contains(characters[stop.offset - 1]) {
             let key = keys[stop.key - 1]
-            let isAmbiguous = key == "."
-            if !isAmbiguous || stop.key < keys.count { commitStop = stop }
+            guard key == "." else {
+                commitStop = stop
+                continue
+            }
+            // `.` 前面是英數字時多半是 app.json、v1.2 這類內容：下一鍵打到一半時畫面會暫時顯示成句號，
+            // 不能拿來判斷，所以不自動送出，等 Enter。前面是中文字、而且後面又打了一個鍵時才算句號。
+            let before = stop.offset >= 2 ? characters[stop.offset - 2] : nil
+            let afterChineseCharacter = before.map { !$0.isASCII && $0.isLetter } ?? false
+            if afterChineseCharacter, stop.key < keys.count { commitStop = stop }
         }
         guard let commitStop else { return state() }
         let committed = String(characters[..<commitStop.offset])

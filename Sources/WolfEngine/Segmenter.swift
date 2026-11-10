@@ -264,9 +264,20 @@ public struct Segmenter: Sendable {
         // 可能是打錯：這個字的按鍵照容錯規則修正後的讀音（vu.3 朽 → u.3 有）。打對的字不會自動改，改由這裡選。
         var corrections: [Candidate] = []
         if weights.typoTolerance {
-            for option in syllableOptions(in: keys, from: syllable.start) where option.penalty < 0 && option.end == syllable.end {
+            // 這個字是一串中文的開頭時，也從前面一兩個沒認成中文的鍵開始試（5ek4 多按 e：從 5 開始修成「這」）。
+            var starts = [syllable.start]
+            if last == 0 {
+                for back in 1...2 where syllable.start - back >= 0 && keys[syllable.start - back].isASCII && keys[syllable.start - back] != " " {
+                    starts.append(syllable.start - back)
+                }
+            }
+            // 所有起點的修正一起比，代價小的（比較可能的打錯）排前面。
+            let options = starts.flatMap { start in
+                syllableOptions(in: keys, from: start).filter { $0.penalty < 0 && $0.end == syllable.end }.map { (start, $0) }
+            }.sorted { $0.1.penalty > $1.1.penalty }
+            for (start, option) in options {
                 guard let entry = entries(for: option.reading).first, seen.insert(entry.text).inserted else { continue }
-                corrections.append(Candidate(text: entry.text, start: syllable.start, reading: option.reading))
+                corrections.append(Candidate(text: entry.text, start: start, reading: option.reading))
                 if corrections.count == Self.correctionSlots { break }
             }
         }
@@ -284,7 +295,8 @@ public struct Segmenter: Sendable {
         // 之前手動切成英文的（私用區字元）也算，讓它可以再切回中文。
         func typedKey(_ index: Int) -> Character? {
             let key = Self.decodedLiteral(keys[index]) ?? keys[index]
-            return key.isASCII && key != " " ? key : nil
+            // 空白只有在最後面時算進來（一聲）：up␠ 切成英文後還能切回「因」。
+            return key.isASCII && (key != " " || index == cursor - 1) ? key : nil
         }
         for piece in all[...end].reversed() {
             guard piece.reading == nil, piece.keys.allSatisfy({ typedKey($0) != nil }) else { break }
@@ -447,7 +459,9 @@ public struct Segmenter: Sendable {
         }
         guard last.isRawKey, keys[last.keys.lowerBound] != " " else { return 1 }
         let run = all.reversed().prefix { $0.isRawKey && keys[$0.keys.lowerBound] != " " }
-        let looksLikeMistypedZhuyin = run.contains { !keys[$0.keys.lowerBound].isLetter }
+        // 全是數字的是真的數字（1234），一次刪一位。
+        let isNumber = run.allSatisfy { keys[$0.keys.lowerBound].isNumber }
+        let looksLikeMistypedZhuyin = !isNumber && run.contains { !keys[$0.keys.lowerBound].isLetter }
         return looksLikeMistypedZhuyin ? run.count : 1
     }
 
@@ -684,7 +698,11 @@ public struct Segmenter: Sendable {
                     // 單一個字的修正太容易把 v3、x86 這類內容改掉。
                     // 用通用規則猜的才需要成詞佐證；個人紀錄可以單字套用。
                     // 但兩種修正都算「修正」，一樣不可以緊接在英數字後面（在 pieces 的動態規劃裡檢查）。
-                    if let entry = entries(for: next.reading).first,
+                    // 全是數字鍵的字（56 直、93 矮）緊接在數字後面時是在打數字（電話、編號、sha256），不轉成中文。
+                    // 前一個數字若是前一個字的聲調（su3 後面的 54），不算。
+                    let isDigitRun = keys[start..<option.end].allSatisfy(\.isASCIIDigit) && start > 0 && keys[start - 1].isASCIIDigit
+                        && !(Dachen.tones[keys[start - 1]] != nil && start > 1 && keys[start - 2].isASCIILetter)
+                    if !isDigitRun, let entry = entries(for: next.reading).first,
                        !next.isGuess || (next.ends.count >= 2 && entry.score >= weights.typoMinWordScore) {
                         // 最常見的同音詞之外，也帶上幾個分數相近的，讓上下文去挑。
                         // 使用者自己選過的詞優先，那時不再讓上下文改掉。
@@ -773,8 +791,9 @@ extension Segmenter {
         for length in 2...4 where start + length <= keys.count {
             let range = start..<start + length
             let hasNonLetterSymbol = keys[range].contains { Dachen.isSymbolKey($0) && !$0.isLetter && Dachen.tones[$0] == nil }
-            // 使用者習慣顛倒順序時，三個鍵加空白（8w ）也修。
-            let spaceToneAllowed = hasNonLetterSymbol && (length == 4 || habits.contains(.reordered))
+            // 空白當一聲：三個鍵加空白的都修（ur8 、uvp ），全是字母的要成詞，除非使用者習慣顛倒順序；
+            // 使用者習慣顛倒順序時，兩個鍵加空白（8w ）也修。修正只用在沒認出來的鍵上，所以不會改到英文字。
+            let spaceToneAllowed = length == 4 || (hasNonLetterSymbol && habits.contains(.reordered))
             guard keys[range].contains(where: isToneDigit) || (spaceToneAllowed && keys[range.upperBound - 1] == " "),
                   hasLetterSymbol(range), let reading = Dachen.syllable(fromUnordered: keys[range]) else { continue }
             add(reading, range.upperBound, weights.typoOrder, isStrong: hasNonLetterSymbol || habits.contains(.reordered))

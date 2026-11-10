@@ -646,3 +646,38 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     #expect(composer.handle(.character(Character("\(index! + 1)"))).marked == "有")
     #expect(learning.typos?.all["vu.3"] == ["u.3": 1])
 }
+
+/// 發版前審查找到的問題（2026-11-10，Codex 審查、Composer 重現）。
+@Test func releaseReviewRegressions() {
+    func run(_ keys: String, then extra: [Composer.Key] = []) -> (committed: String, marked: String) {
+        var composer = Composer(segmenter: segmenter)
+        var committed = ""
+        var marked = ""
+        for key in keys.map(Composer.Key.character) + extra {
+            let result = composer.handle(key)
+            committed += result.commit ?? ""
+            marked = result.marked
+        }
+        return (committed, marked)
+    }
+    // 英數字後面的點不會被當成句號提前送出。
+    #expect(run("ji3m/4app.json") == ("", "我用app.json"))
+    #expect(run("ji3m/4v1.2").committed == "")
+    // 中文後面的點照樣是句號、照樣自動送出。
+    #expect(run("su3cl3.ji3").committed == "你好。")
+    // 電話、編號不轉成中文。
+    #expect(run("0936123456").marked == "0936123456")
+    #expect(run("123456").marked == "123456")
+    // 數字一次刪一位。
+    #expect(run("1234", then: [.backspace]).marked == "123")
+    // 一聲的字切成英文後能切回來。
+    var composer = Composer(segmenter: segmenter)
+    for key in "up " { _ = composer.handle(.character(key)) }
+    _ = composer.handle(.down)
+    #expect(composer.handle(.character("8")).marked == "up ")
+    #expect(composer.handle(.down).candidates.contains("因"))
+    // 多按一鍵跨到前面的數字：選字窗有「這」。
+    composer = Composer(segmenter: segmenter)
+    for key in "5ek4" { _ = composer.handle(.character(key)) }
+    #expect(composer.handle(.down).candidates.contains("這"))
+}

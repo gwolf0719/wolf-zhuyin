@@ -26,6 +26,7 @@ private func lines(_ path: String) -> [String] {
     ("sucl3", "你好"),       // 漏按聲調
     ("sy3cl3", "你好"),      // u 按成隔壁的 y
     ("ur8 g;4", "加上"),     // 空白當一聲、順序顛倒，夾著數字鍵 8
+    ("tj/6uvp ", "重新"),    // 空白當一聲、全是字母的順序顛倒：要成詞才修
     ("ji3283nj04k27", "我打算的"), // 單字順序顛倒，夾著數字鍵 2：不必成詞也修
 ])
 func recoversMistypedZhuyin(keys: String, expected: String) {
