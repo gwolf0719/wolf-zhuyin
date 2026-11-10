@@ -6,17 +6,51 @@ import WolfEngine
 /// 最小外殼：只負責把按鍵事件翻成 `Composer.Key`，再照結果更新組字區。行為邏輯都在 `Composer`。
 @objc(WolfInputController)
 final class WolfInputController: IMKInputController {
-    private var composer = Composer(segmenter: sharedSegmenter)
+    private var composer = Preferences(defaults: .standard).composer(lexicon: sharedLexicon, stores: sharedStores)
     private static let noReplacement = NSRange(location: NSNotFound, length: NSNotFound)
 
     override init!(server: IMKServer!, delegate: Any!, client inputClient: Any!) {
         super.init(server: server, delegate: delegate, client: inputClient)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(preferencesDidChange(_:)), name: Preferences.didChangeNotification, object: nil
+        )
         debugLog("controller init")
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self, name: Preferences.didChangeNotification, object: nil)
     }
 
     override func activateServer(_ sender: Any!) {
         debugLog("activateServer")
         super.activateServer(sender)
+        reloadPreferences()
+    }
+
+    @objc private func preferencesDidChange(_ notification: Notification) {
+        reloadPreferences()
+    }
+
+    private func reloadPreferences() {
+        // 先把舊引擎的組字送回原輸入處，避免切換選項時丟掉尚未送出的字。
+        guard let client = client() else { return }
+        commitComposition(client)
+        composer = Preferences(defaults: .standard).composer(lexicon: sharedLexicon, stores: sharedStores)
+    }
+
+    override func menu() -> NSMenu! {
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "狼注音設定…", action: #selector(openSettings(_:)), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "檢查更新", action: #selector(checkForUpdates(_:)), keyEquivalent: ""))
+        return menu
+    }
+
+    @objc private func openSettings(_ sender: Any?) {
+        SettingsWindow.shared.show()
+    }
+
+    @objc private func checkForUpdates(_ sender: Any?) {
+        SettingsWindow.shared.show(checkForUpdates: true)
     }
 
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
@@ -56,6 +90,8 @@ final class WolfInputController: IMKInputController {
     override func deactivateServer(_ sender: Any!) {
         CandidatePanel.shared.hide()
         super.deactivateServer(sender)
+        // 新版已換好、要結束行程換版之前，先等學習紀錄寫完。
+        if Updater.pendingRestart { sharedStores.flush() }
         Updater.restartIfPending()
     }
 

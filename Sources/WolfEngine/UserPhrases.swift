@@ -5,16 +5,18 @@ import Foundation
 public final class UserPhrases: @unchecked Sendable {
     private let lock = NSLock()
     private var phrases: [String: [String]] = [:]
-    private let fileURL: URL?
+    private let file: JSONFile<[String: [String]]>
+    /// 同一個讀音最多記這麼多個選擇。
+    public static let maximumPerReading = 10
 
     /// - Parameter fileURL: 儲存位置（JSON）；nil 表示只放在記憶體（測試用）。
     public init(fileURL: URL? = nil) {
-        self.fileURL = fileURL
-        if let fileURL, let data = try? Data(contentsOf: fileURL),
-           let stored = try? JSONDecoder().decode([String: [String]].self, from: data) {
-            phrases = stored
-        }
+        file = JSONFile(url: fileURL)
+        phrases = file.load() ?? [:]
     }
+
+    /// 等排定的寫入完成。
+    public func flush() { file.flush() }
 
     /// 這個讀音下使用者選過的字詞，最近選的在前。
     public func texts(for reading: String) -> [String] {
@@ -22,19 +24,12 @@ public final class UserPhrases: @unchecked Sendable {
     }
 
     public func learn(reading: String, text: String) {
-        let snapshot: [String: [String]] = lock.withLock {
+        lock.withLock {
             var texts = phrases[reading] ?? []
             texts.removeAll { $0 == text }
             texts.insert(text, at: 0)
-            phrases[reading] = texts
-            return phrases
+            phrases[reading] = Array(texts.prefix(Self.maximumPerReading))
         }
-        guard let fileURL else { return }
-        // 寫入失敗不影響打字；下次選字會再寫一次。
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(snapshot) else { return }
-        try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: fileURL, options: .atomic)
+        file.save { [self] in lock.withLock { phrases } }
     }
 }

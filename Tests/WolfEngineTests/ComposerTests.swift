@@ -232,7 +232,9 @@ private func type(_ keys: String, then last: Composer.Key? = nil, composer: inou
 @Test func learnedPhrasesPersistToDisk() throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent("wolf-test-\(UUID().uuidString)/user-phrases.json")
     defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-    UserPhrases(fileURL: url).learn(reading: "ㄗㄞˋ", text: "再")
+    let first = UserPhrases(fileURL: url)
+    first.learn(reading: "ㄗㄞˋ", text: "再")
+    first.flush()
     #expect(UserPhrases(fileURL: url).texts(for: "ㄗㄞˋ") == ["再"])
 
     var learning = segmenter
@@ -398,6 +400,7 @@ private func type(_ keys: String, then last: Composer.Key? = nil, composer: inou
     #expect(composer.handle(.tab).marked == "不好吃")
     _ = composer.handle(.escape)
 
+    learning.history?.flush()
     // 重新載入後還在。
     #expect(UserHistory(fileURL: url).likely(after: ["不好"]).first == "吃")
     // 沒設定紀錄的引擎不受影響。
@@ -459,6 +462,7 @@ private func type(_ keys: String, then last: Composer.Key? = nil, composer: inou
     // 第二次之後自動修正。
     #expect(type("s3u", composer: &composer).marked == "你")
     #expect(composer.handle(.enter).commit == "你")
+    learning.typos?.flush()
     #expect(UserTypos(fileURL: url).intended(for: "s3u") == "su3")
 
     // 沒設定紀錄的引擎不受影響。

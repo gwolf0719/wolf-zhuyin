@@ -5,19 +5,28 @@ import Foundation
 public final class UserHistory: @unchecked Sendable {
     private let lock = NSLock()
     private var following: [String: [String: Int]] = [:]
-    private let fileURL: URL?
+    private let file: JSONFile<[String: [String: Int]]>
 
     /// 出現至少這麼多次才拿來預測，避免只打過一次的內容一直跳出來。
     public static let minimumCount = 2
+    /// 最多記這麼多個前文；超過時丟掉總次數最少的一成。
+    public static let maximumContexts = 5000
+    /// 每個前文最多記這麼多種後續；超過時丟掉次數最少的。
+    public static let maximumFollowersPerContext = 16
+    /// 太長的後續不記（多半是整句英文或貼上的內容）。
+    public static let maximumFollowerLength = 16
+
+    /// 目前記了幾個前文。
+    public var contextCount: Int { lock.withLock { following.count } }
 
     /// - Parameter fileURL: 儲存位置（JSON）；nil 表示只放在記憶體（測試用）。
     public init(fileURL: URL? = nil) {
-        self.fileURL = fileURL
-        if let fileURL, let data = try? Data(contentsOf: fileURL),
-           let stored = try? JSONDecoder().decode([String: [String: Int]].self, from: data) {
-            following = stored
-        }
+        file = JSONFile(url: fileURL)
+        following = file.load() ?? [:]
     }
+
+    /// 等排定的寫入完成。
+    public func flush() { file.flush() }
 
     /// 查詢用的前文：結尾是英文字就用那個字；結尾是中文就用最後兩個字，再退而求其次用最後一個字。
     static func contextKeys(for words: some BidirectionalCollection<String>) -> [String] {
@@ -57,15 +66,23 @@ public final class UserHistory: @unchecked Sendable {
             }
         }
         guard !pairs.isEmpty else { return }
-        let snapshot: [String: [String: Int]] = lock.withLock {
-            for (key, next) in pairs { following[key, default: [:]][next, default: 0] += 1 }
-            return following
+        lock.withLock {
+            for (key, next) in pairs where next.count <= Self.maximumFollowerLength {
+                var followers = following[key, default: [:]]
+                followers[next, default: 0] += 1
+                if followers.count > Self.maximumFollowersPerContext,
+                   let weakest = followers.filter({ $0.key != next }).min(by: { ($0.value, $1.key) < ($1.value, $0.key) }) {
+                    followers[weakest.key] = nil
+                }
+                following[key] = followers
+            }
+            if following.count > Self.maximumContexts {
+                let keep = following.sorted { $0.value.values.reduce(0, +) > $1.value.values.reduce(0, +) }
+                    .prefix(Self.maximumContexts * 9 / 10)
+                following = Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) })
+            }
         }
-        guard let fileURL else { return }
-        // 寫入失敗不影響打字。
-        guard let data = try? JSONEncoder().encode(snapshot) else { return }
-        try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: fileURL, options: .atomic)
+        file.save { [self] in lock.withLock { following } }
     }
 
     /// 這段前文後面常接什麼，最常見的在前。次數相同時照字典序，讓結果固定。

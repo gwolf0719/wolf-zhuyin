@@ -5,30 +5,33 @@ import Foundation
 public final class UserTypos: @unchecked Sendable {
     private let lock = NSLock()
     private var corrections: [String: [String: Int]] = [:]
-    private let fileURL: URL?
+    private let file: JSONFile<[String: [String: Int]]>
 
     /// 同一個錯至少更正過這麼多次才自動套用。
     public static let minimumCount = 2
+    /// 最多記這麼多種打錯的按鍵；超過時丟掉最少發生的。
+    public static let maximumEntries = 2000
 
     /// - Parameter fileURL: 儲存位置（JSON）；nil 表示只放在記憶體（測試用）。
     public init(fileURL: URL? = nil) {
-        self.fileURL = fileURL
-        if let fileURL, let data = try? Data(contentsOf: fileURL),
-           let stored = try? JSONDecoder().decode([String: [String: Int]].self, from: data) {
-            corrections = stored
-        }
+        file = JSONFile(url: fileURL)
+        corrections = file.load() ?? [:]
     }
 
+    /// 等排定的寫入完成。
+    public func flush() { file.flush() }
+
     public func learn(mistyped: String, intended: String) {
-        let snapshot: [String: [String: Int]] = lock.withLock {
+        guard mistyped.count <= 8, intended.count <= 8 else { return }
+        lock.withLock {
             corrections[mistyped, default: [:]][intended, default: 0] += 1
-            return corrections
+            if corrections.count > Self.maximumEntries {
+                let keep = corrections.sorted { $0.value.values.reduce(0, +) > $1.value.values.reduce(0, +) }
+                    .prefix(Self.maximumEntries * 9 / 10)
+                corrections = Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) })
+            }
         }
-        guard let fileURL else { return }
-        // 寫入失敗不影響打字。
-        guard let data = try? JSONEncoder().encode(snapshot) else { return }
-        try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: fileURL, options: .atomic)
+        file.save { [self] in lock.withLock { corrections } }
     }
 
     /// 這串按鍵若是使用者常犯的錯，回傳他原本想打的按鍵。

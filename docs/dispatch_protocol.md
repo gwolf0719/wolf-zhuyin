@@ -12,13 +12,15 @@
 
 | 工作 | 實作者 | 理由 |
 | --- | --- | --- |
-| 外殼 UI（`Sources/WolfIME` 內的視窗、選單） | agy | 規格清楚、檔案邊界明確 |
+| 外殼 UI（`Sources/WolfIME` 內的視窗、選單） | Codex `-s workspace-write`（agy 被擋時） | 規格清楚、檔案邊界明確 |
 | 獨立審查、對照實作 | Codex（`-s read-only`） | 不同模型盲點不同 |
 | 圖示等圖檔 | Codex 內建 `image_gen` | 見全域圖檔規則 |
 | 引擎演算法（`Sources/WolfEngine`） | 統籌者自己做 | 需要評測集與大量來回調參，難以一次規格化 |
 
 指令：
-- agy：`agy -p "$(cat 卡.md)" --add-dir /Users/james/Project/狼注音 --model gemini-4-argon-high --dangerously-skip-permissions --print-timeout 25m`（兩個旗標放 prompt 後面）
+- agy：**在這個環境下會被 Claude Code 的自動模式安全機制擋下**（2026-11-10：`--dangerously-skip-permissions` 被判為不安全的代理程式）。要用 agy 得由使用者在設定裡加允許規則；否則程式票直接派 Codex `-s workspace-write`（沙箱只能寫專案資料夾）。
+- agy 原指令：`agy -p "$(cat 卡.md)" --add-dir /Users/james/Project/狼注音 --model gemini-4-argon-high --dangerously-skip-permissions --print-timeout 25m`（兩個旗標放 prompt 後面）
+- Codex 實作：`codex exec -s workspace-write --skip-git-repo-check -C /Users/james/Project/狼注音 -o <結果檔> - < 卡.md`
 - Codex 審查：`codex exec -s read-only -C /Users/james/Project/狼注音 -o <結果檔> - < 卡.md`
 
 ## 任務卡格式

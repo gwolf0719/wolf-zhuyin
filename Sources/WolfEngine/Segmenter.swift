@@ -161,18 +161,28 @@ public struct Segmenter: Sendable {
         return segments
     }
 
-    /// 結尾那幾個中文字的其他選擇：先列較長的詞，再列單字。結尾不是中文時回傳空陣列。
-    public func candidates(_ input: String, afterChinese: Bool = true) -> [Candidate] {
+    /// 游標前面那幾個中文字的其他選擇：先列較長的詞，再列單字。游標前不是中文時回傳空陣列。
+    /// 音節邊界取自整段的轉換結果，而不是只看游標前那一截重新判斷——
+    /// 否則游標在中間時，被修正過或靠後文成詞的字會被切錯。
+    /// - Parameter cursor: 游標在按鍵中的位置；nil 表示結尾。
+    public func candidates(_ input: String, cursor: Int? = nil, afterChinese: Bool = true) -> [Candidate] {
         let keys = Array(input)
-        let all = pieces(keys, afterChinese: afterChinese, showPending: false)
-        // 把結尾連續的中文詞拆回一個個音節。
-        var syllables: [(reading: String, start: Int)] = []
-        for piece in all.reversed() {
-            guard let reading = piece.reading else { break }
+        let cursor = cursor ?? keys.count
+        // 把整段的中文詞拆回音節，分成一串串連續的中文。
+        var runs: [[(reading: String, start: Int, end: Int)]] = [[]]
+        for piece in pieces(keys, afterChinese: afterChinese, showPending: false) {
+            guard let reading = piece.reading else {
+                runs.append([])
+                continue
+            }
             let starts = [piece.keys.lowerBound] + piece.syllableEnds.dropLast()
-            let parsed = zip(reading.split(separator: "-"), starts).map { (String($0), $1) }
-            syllables.insert(contentsOf: parsed, at: 0)
+            for (syllable, (start, end)) in zip(reading.split(separator: "-"), zip(starts, piece.syllableEnds)) {
+                runs[runs.count - 1].append((String(syllable), start, end))
+            }
         }
+        guard let run = runs.first(where: { $0.contains { $0.end == cursor } }),
+              let last = run.firstIndex(where: { $0.end == cursor }) else { return [] }
+        let syllables = run[...last].map { (reading: $0.reading, start: $0.start) }
         var result: [Candidate] = []
         var seen: Set<String> = []
         for length in stride(from: min(syllables.count, Self.maxSyllablesPerWord), through: 1, by: -1) {
@@ -276,6 +286,11 @@ public struct Segmenter: Sendable {
             if piece.trailingSpace { text += " " }
         }
         return (text, stops)
+    }
+
+    /// 游標前面那個單位（一個中文字、一個英文字母…）從哪個按鍵開始。用整段的版面判斷，給中間編輯用。
+    public func unitStart(_ input: String, before cursor: Int, afterChinese: Bool = true) -> Int {
+        layout(input, afterChinese: afterChinese).stops.last { $0.key < cursor }?.key ?? 0
     }
 
     /// 按一次退格該刪掉結尾幾個按鍵。以「畫面上的一個單位」為準：
@@ -463,13 +478,14 @@ public struct Segmenter: Sendable {
                     extended.append(next)
                     // 修正過的音節要連同旁邊的字組成一個夠常見的詞才採用：這是「使用者真的想打這個」最強的證據。
                     // 單一個字的修正太容易把 v3、x86 這類內容改掉。
-                    let isCorrection = next.isGuess
+                    // 用通用規則猜的才需要成詞佐證；個人紀錄可以單字套用。
+                    // 但兩種修正都算「修正」，一樣不可以緊接在英數字後面（在 pieces 的動態規劃裡檢查）。
                     if let entry = entries(for: next.reading).first,
-                       !isCorrection || (next.ends.count >= 2 && entry.score >= weights.typoMinWordScore) {
+                       !next.isGuess || (next.ends.count >= 2 && entry.score >= weights.typoMinWordScore) {
                         result.append(Edge(
                             start: start, end: option.end, language: .chinese, text: entry.text,
                             score: entry.score + next.penalty, reading: next.reading,
-                            syllableEnds: next.ends, isCorrection: isCorrection
+                            syllableEnds: next.ends, isCorrection: next.penalty < 0
                         ))
                     }
                 }

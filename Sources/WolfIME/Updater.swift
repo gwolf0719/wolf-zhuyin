@@ -1,4 +1,5 @@
 import Cocoa
+import WolfEngine
 import WolfUpdate
 
 /// 自動更新：向 GitHub 查最新版，下載後驗證簽章，通過才替換自己。
@@ -11,10 +12,12 @@ enum Updater {
 
     /// 常駐時呼叫：啟動一分鐘後查一次，之後每天查一次。
     static func start() {
-        guard !UserDefaults.standard.bool(forKey: "AutoUpdateDisabled") else { return }
         func schedule(after seconds: TimeInterval) {
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + seconds) {
-                debugLog("更新檢查：\(checkAndInstall())")
+                if Preferences(defaults: .standard).autoUpdate {
+                    debugLog("更新檢查：\(checkAndInstall())")
+                }
+                // 關閉時保留排程，之後重新開啟選項就能在下一次恢復檢查。
                 schedule(after: 24 * 60 * 60)
             }
         }

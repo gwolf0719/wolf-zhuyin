@@ -63,6 +63,8 @@ public struct Composer: Sendable {
         let start: Int
         /// 候選字的讀音；符號沒有。
         var reading: String? = nil
+        /// 選了之後先插入的分隔（接受英文預測時補詞間空白）。
+        var separator = ""
     }
 
     public static let pageSize = 9
@@ -252,7 +254,13 @@ public struct Composer: Sendable {
             // 有預測就列出來（再按一次 Tab 選第一個，或按數字鍵選）；沒有就當一般按鍵，送出後交還給 app。
             let predictions = currentPredictions
             guard !predictions.isEmpty else { fallthrough }
-            panel = Panel(items: predictions.map { Item(text: $0, start: cursor) }, isSymbols: false)
+            // 英文接英文要有空白（hello + world），中文不用。
+            func isLatin(_ character: Character?) -> Bool {
+                character.map { $0.isASCII && ($0.isLetter || $0.isNumber) } ?? false
+            }
+            panel = Panel(items: predictions.map { prediction in
+                Item(text: prediction, start: cursor, separator: isLatin(keys.last) && isLatin(prediction.first) ? " " : "")
+            }, isSymbols: false)
             return state()
         case .other:
             // 先送出組字內容，再把按鍵交還給 app。
@@ -263,7 +271,11 @@ public struct Composer: Sendable {
             return commit(text(of: keys))
         case .backspace:
             guard !keys.isEmpty else { return Result(handled: false) }
-            let length = min(cursor, max(1, segmenter.backspaceLength(beforeCursor, afterChinese: afterChinese)))
+            // 游標在結尾：照畫面單位刪（打到一半的音節一次一個符號、打錯的亂碼整串）。
+            // 游標在中間：刪掉游標前面那個字，邊界取自整段的轉換結果。
+            let length = cursor == keys.count
+                ? min(cursor, max(1, segmenter.backspaceLength(beforeCursor, afterChinese: afterChinese)))
+                : cursor - segmenter.unitStart(String(keys), before: cursor, afterChinese: afterChinese)
             let removed = Array(keys[cursor - length..<cursor])
             keys.removeSubrange(cursor - length..<cursor)
             cursor -= length
@@ -283,7 +295,7 @@ public struct Composer: Sendable {
             return state()
         case .down:
             guard !keys.isEmpty else { return Result(handled: false) }
-            let candidates = segmenter.candidates(beforeCursor, afterChinese: afterChinese)
+            let candidates = segmenter.candidates(String(keys), cursor: cursor, afterChinese: afterChinese)
             if !candidates.isEmpty {
                 panel = Panel(items: candidates.map { Item(text: $0.text, start: $0.start, reading: $0.reading) }, isSymbols: false)
             }
@@ -345,8 +357,9 @@ public struct Composer: Sendable {
         if let chosen {
             // 選定的文字直接寫進緩衝，取代原本那幾個按鍵；之後不再被重新轉換。
             learn(chosen, after: String(keys[..<chosen.start]))
-            keys.replaceSubrange(chosen.start..<cursor, with: Array(chosen.text))
-            cursor = chosen.start + chosen.text.count
+            let inserted = Array(chosen.separator + chosen.text)
+            keys.replaceSubrange(chosen.start..<cursor, with: inserted)
+            cursor = chosen.start + inserted.count
             panel = nil
             return autoCommit()
         }

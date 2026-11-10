@@ -7,6 +7,7 @@ import WolfEngine
 //   WolfZhuyin --register   向系統登記這個輸入法（安裝後跑一次）
 //   WolfZhuyin --enable     把它加入使用者的輸入方式（等同在系統設定手動加入）
 //   WolfZhuyin --check-update  立刻檢查並安裝新版
+//   WolfZhuyin --settings   開啟設定視窗，關閉後結束程式
 //   WolfZhuyin --version    印出版本
 //   WolfZhuyin --status     印出系統是否認得、是否已啟用
 // 不帶參數時由系統啟動，作為輸入法伺服器常駐。
@@ -18,6 +19,14 @@ private func installedSource() -> TISInputSource? {
 }
 
 switch CommandLine.arguments.dropFirst().first {
+case "--settings":
+    let app = NSApplication.shared
+    app.setActivationPolicy(.regular)
+    SettingsWindow.shared.terminatesOnClose = true
+    SettingsWindow.shared.show()
+    app.run()
+    exit(0)
+
 case "--register":
     let status = TISRegisterInputSource(Bundle.main.bundleURL as CFURL)
     print(status == noErr ? "已登記" : "登記失敗（OSStatus \(status)）")
@@ -67,13 +76,8 @@ default:
 }
 
 let lexiconURL = Bundle.main.resourceURL!.appendingPathComponent("data.txt")
-let sharedSegmenter: Segmenter = {
-    var segmenter = Segmenter(lexicon: try! Lexicon(contentsOf: lexiconURL))
-    let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-    segmenter.userPhrases = UserPhrases(fileURL: support.appendingPathComponent("WolfZhuyin/user-phrases.json"))
-    segmenter.history = UserHistory(fileURL: support.appendingPathComponent("WolfZhuyin/history.json"))
-    return segmenter
-}()
+let sharedLexicon = try! Lexicon(contentsOf: lexiconURL)
+let sharedStores = Preferences.Stores.inApplicationSupport()
 
 let server = IMKServer(
     name: Bundle.main.infoDictionary?["InputMethodConnectionName"] as? String,

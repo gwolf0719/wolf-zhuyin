@@ -59,6 +59,13 @@ public struct Preferences: Sendable, Equatable {
             self.typos = typos
         }
 
+        /// 等三個紀錄排定的寫入都完成。程式結束前呼叫，否則最後一筆可能沒寫進檔案。
+        public func flush() {
+            phrases.flush()
+            history.flush()
+            typos.flush()
+        }
+
         /// 放在 `~/Library/Application Support/WolfZhuyin/`。
         public static func inApplicationSupport() -> Stores {
             let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
