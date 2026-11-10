@@ -65,6 +65,8 @@ public struct Composer: Sendable {
         var reading: String? = nil
         /// 選了之後先插入的分隔（接受英文預測時補詞間空白）。
         var separator = ""
+        /// 實際寫進緩衝的字元；nil 表示就是 `text`（照打的英文要包成不再轉換的字元）。
+        var inserted: String? = nil
     }
 
     public static let pageSize = 9
@@ -318,7 +320,9 @@ public struct Composer: Sendable {
             guard !keys.isEmpty else { return Result(handled: false) }
             let candidates = segmenter.candidates(String(keys), cursor: cursor, afterChinese: afterChinese)
             if !candidates.isEmpty {
-                panel = Panel(items: candidates.map { Item(text: $0.text, start: $0.start, reading: $0.reading) }, isSymbols: false)
+                panel = Panel(items: candidates.map {
+                    Item(text: $0.text, start: $0.start, reading: $0.reading, inserted: $0.inserted)
+                }, isSymbols: false)
             }
             return state()
         case .left, .right:
@@ -378,7 +382,7 @@ public struct Composer: Sendable {
         if let chosen {
             // 選定的文字直接寫進緩衝，取代原本那幾個按鍵；之後不再被重新轉換。
             learn(chosen, after: String(keys[..<chosen.start]))
-            let inserted = Array(chosen.separator + chosen.text)
+            let inserted = Array(chosen.separator + (chosen.inserted ?? chosen.text))
             keys.replaceSubrange(chosen.start..<cursor, with: inserted)
             cursor = chosen.start + inserted.count
             panel = nil

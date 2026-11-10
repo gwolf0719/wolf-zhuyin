@@ -102,7 +102,8 @@ func languageAccuracyDoesNotRegress(path: String, threshold: Double) throws {
     #expect(candidates.first?.start == 0)
     // 單字候選只取代最後一個音節。
     #expect(candidates.contains { $0.start == 4 })
-    #expect(segmenter.candidates("hello").isEmpty)
+    // 英文字沒有中文候選，只有切換用的注音符號。
+    #expect(segmenter.candidates("hello").allSatisfy { $0.reading == nil })
 }
 
 /// 打字途中不可以把已經顯示的中文改回英文，或反過來。

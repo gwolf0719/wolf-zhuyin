@@ -30,6 +30,8 @@ run 's3ucl3{enter}' '你好'
 run 'ji3m/4npm{enter}' '我用npm'
 run 'yj/3ej/4100m06{enter}' '總共100元'
 run 'C:\\Users{enter}' 'C:\Users'
+run 'su3{down}8{enter}' 'su3'
+run 'su3{down}9{enter}' 'ㄋㄧˇ'
 
 if [[ $failed -gt 0 ]]; then
     echo "端對端測試：$failed 句失敗"

@@ -92,6 +92,18 @@ public enum Dachen {
         return remaining.isEmpty && !result.isEmpty ? result : nil
     }
 
+    /// 每個鍵各自換成注音符號（聲調鍵換成聲調記號，空白當一聲不顯示）；有任何一個不是注音鍵就回傳 nil。
+    /// 給「我要打注音符號本身」用，所以不檢查拼法。
+    static func symbolsByKey(_ keys: ArraySlice<Character>) -> String? {
+        var result = ""
+        for key in keys {
+            if let symbol = consonants[key] ?? medials[key] ?? rimes[key] { result.append(symbol) }
+            else if let mark = tones[key] { result += mark }
+            else { return nil }
+        }
+        return result.isEmpty ? nil : result
+    }
+
     /// 讀音（如 `ㄋㄧˇ-ㄏㄠˇ`）→ 按鍵序列（`su3cl3`）。
     static func keys(forReading reading: String) -> String? {
         var result = ""

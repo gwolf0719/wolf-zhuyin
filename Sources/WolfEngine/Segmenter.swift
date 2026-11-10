@@ -135,8 +135,36 @@ public struct Segmenter: Sendable {
         public let text: String
         /// 選了這個候選後，會取代從這個按鍵位置到結尾的內容。
         public let start: Int
-        public let reading: String
+        /// 中文候選的讀音；切換語言的選項（照打的英文、注音符號）沒有。
+        public let reading: String?
+        /// 選了之後實際寫進緩衝的字元：定案文字原樣，照打的英文要用 `literal` 包起來，免得被重新轉換。
+        public let inserted: String
+
+        public init(text: String, start: Int, reading: String?, inserted: String? = nil) {
+            self.text = text
+            self.start = start
+            self.reading = reading
+            self.inserted = inserted ?? text
+        }
     }
+
+    /// 選字窗前幾個是中文候選，接著固定放「切換語言」的選項（第 8、9 個），好記。
+    static let languageSwitchSlot = 7
+
+    /// 緩衝裡「照打的英文」：ASCII 字元轉成私用區字元存放，不再被當成按鍵轉換；輸出時還原。
+    public static func literal(_ character: Character) -> Character {
+        guard let value = character.asciiValue else { return character }
+        return Character(Unicode.Scalar(0xE000 + UInt32(value))!)
+    }
+
+    static func decodedLiteral(_ character: Character) -> Character? {
+        guard let scalar = character.unicodeScalars.first, character.unicodeScalars.count == 1,
+              (0xE000...0xE07F).contains(scalar.value) else { return nil }
+        return Character(Unicode.Scalar(UInt8(scalar.value - 0xE000)))
+    }
+
+    /// 不認英文字（強制轉成中文時用）。
+    var englishEnabled = true
 
     /// 使用者最近選的字詞要有多少優勢：比詞庫第一名高這麼多，而且至少有 `learnedFloor` 分，
     /// 讓學到的新詞（詞庫裡沒有的組合）贏過拆成單字的走法。
@@ -200,7 +228,9 @@ public struct Segmenter: Sendable {
             }
         }
         guard let run = runs.first(where: { $0.contains { $0.end == cursor } }),
-              let last = run.firstIndex(where: { $0.end == cursor }) else { return [] }
+              let last = run.firstIndex(where: { $0.end == cursor }) else {
+            return switchToChinese(keys, cursor: cursor, afterChinese: afterChinese)
+        }
         let syllables = run[...last].map { (reading: $0.reading, start: $0.start) }
         var result: [Candidate] = []
         var seen: Set<String> = []
@@ -210,6 +240,40 @@ public struct Segmenter: Sendable {
             for entry in entries(for: reading) where seen.insert(entry.text).inserted {
                 result.append(Candidate(text: entry.text, start: tail.first!.start, reading: reading))
             }
+        }
+        // 切換語言：游標前面那個字照打的按鍵（英文），以及它的注音符號。
+        let syllable = run[last]
+        let typed = String(keys[syllable.start..<syllable.end])
+        let switches = [
+            Candidate(text: typed, start: syllable.start, reading: nil, inserted: String(typed.map(Self.literal))),
+            Candidate(text: syllable.reading, start: syllable.start, reading: nil),
+        ].filter { seen.insert($0.text).inserted }
+        result.insert(contentsOf: switches, at: min(result.count, Self.languageSwitchSlot))
+        return result
+    }
+
+    /// 游標前面是英文或沒認出來的按鍵：提供強制轉成中文、以及注音符號本身。
+    private func switchToChinese(_ keys: [Character], cursor: Int, afterChinese: Bool) -> [Candidate] {
+        // 游標前面連續的非中文按鍵（英文字、沒認出來的按鍵），往前到中文、定案文字或空白為止。
+        let all = pieces(keys, afterChinese: afterChinese, showPending: false)
+        guard let end = all.lastIndex(where: { $0.keys.upperBound == cursor }) else { return [] }
+        var start = cursor
+        for piece in all[...end].reversed() {
+            let isTyped = piece.reading == nil && piece.keys.allSatisfy { keys[$0].isASCII && keys[$0] != " " }
+            guard isTyped else { break }
+            start = piece.keys.lowerBound
+        }
+        guard start < cursor else { return [] }
+        let span = keys[start..<cursor]
+        var result: [Candidate] = []
+        var chinese = self
+        chinese.englishEnabled = false
+        let forced = chinese.segment(String(span), afterChinese: afterChinese).map(\.text).joined()
+        if forced.contains(where: { !$0.isASCII && $0.isLetter }) {
+            result.append(Candidate(text: forced, start: start, reading: nil))
+        }
+        if let symbols = Dachen.symbolsByKey(span) {
+            result.append(Candidate(text: symbols, start: start, reading: nil))
         }
         return result
     }
@@ -515,6 +579,10 @@ public struct Segmenter: Sendable {
 
         let key = keys[start]
         // 非 ASCII 是已經定案的文字（選字窗或符號表選的），原樣輸出，也不讓其他邊跨過它。
+        if let ascii = Self.decodedLiteral(key) {
+            // 使用者指定照打的英文。
+            return [Edge(start: start, end: start + 1, language: .english, text: String(ascii), score: 0)]
+        }
         if !key.isASCII {
             return [Edge(start: start, end: start + 1, language: .chinese, text: String(key), score: 0)]
         }
@@ -587,7 +655,7 @@ public struct Segmenter: Sendable {
         // 英文詞：必須從字母串的開頭起算，避免從音節中間認出英文字（如「今」rup 裡的 up）。
         // 結尾不限，因為英文後面可以直接接中文（code + ji3）。
         // 中間可以有數字（mp4、x86），但要從字母開始；這類字只有收在常用表裡的才認得。
-        if keys[start].isASCIILetter, start == 0 || !keys[start - 1].isASCIILetter {
+        if englishEnabled, keys[start].isASCIILetter, start == 0 || !keys[start - 1].isASCIILetter {
             var end = start
             while end < keys.count, keys[end].isASCIILetter || keys[end].isASCIIDigit {
                 end += 1

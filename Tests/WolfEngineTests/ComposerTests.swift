@@ -567,3 +567,36 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     _ = composer.handle(.tab)
     #expect(composer.handle(.tab).marked == " world")
 }
+
+/// 已經判定好的字可以手動切換：中文字切成照打的英文或注音符號，打到一半的音節選注音符號本身。
+@Test func downArrowSwitchesLanguage() {
+    var composer = Composer(segmenter: segmenter)
+    _ = type("su3", composer: &composer)
+    let panel = composer.handle(.down)
+    // 第 8、9 個固定是「照打的英文」和「注音符號」。
+    #expect(panel.candidates[7] == "su3")
+    #expect(panel.candidates[8] == "ㄋㄧˇ")
+    let english = composer.handle(.character("8"))
+    #expect(english.marked == "su3")
+    // 選定之後就固定，再打字也不會被改回中文。
+    #expect(type("cl3", composer: &composer).marked == "su3好")
+    #expect(composer.handle(.enter).commit == "su3好")
+
+    _ = type("su3", composer: &composer)
+    _ = composer.handle(.down)
+    #expect(composer.handle(.character("9")).marked == "ㄋㄧˇ")
+    #expect(composer.handle(.enter).commit == "ㄋㄧˇ")
+
+    // 打到一半的音節：選注音符號本身。
+    _ = type("ji3su", composer: &composer)
+    let pending = composer.handle(.down)
+    #expect(pending.candidates.contains("ㄋㄧ"))
+    let index = pending.candidates.firstIndex(of: "ㄋㄧ")!
+    #expect(composer.handle(.character(Character("\(index + 1)"))).marked == "我ㄋㄧ")
+
+    // 被判成英文的：可以強制轉成中文。
+    _ = composer.handle(.escape)
+    _ = type("ji3m/4npm", composer: &composer)
+    let forced = composer.handle(.down)
+    #expect(forced.candidates.contains("ㄙㄣㄩ"))
+}
