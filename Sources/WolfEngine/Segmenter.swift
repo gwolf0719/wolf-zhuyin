@@ -96,6 +96,8 @@ public struct Segmenter: Sendable {
         let penalty: Double
         /// 根據使用者自己更正過的紀錄修的：證據夠強，不必再靠旁邊的字成詞。
         var isPersonal = false
+        /// 順序顛倒、而且夾著數字或符號鍵（k27、ur8 ）：英文不會這樣打，證據夠強，單字也修。
+        var isStrong = false
     }
 
     private static let maxSyllablesPerWord = 8
@@ -546,7 +548,7 @@ public struct Segmenter: Sendable {
                     next.reading += next.reading.isEmpty ? option.reading : "-" + option.reading
                     next.ends.append(option.end)
                     next.penalty += option.penalty
-                    if option.penalty < 0, !option.isPersonal { next.isGuess = true }
+                    if option.penalty < 0, !option.isPersonal, !option.isStrong { next.isGuess = true }
                     extended.append(next)
                     // 修正過的音節要連同旁邊的字組成一個夠常見的詞才採用：這是「使用者真的想打這個」最強的證據。
                     // 單一個字的修正太容易把 v3、x86 這類內容改掉。
@@ -607,9 +609,9 @@ extension Segmenter {
     private func syllableOptions(in keys: [Character], from start: Int) -> [SyllableOption] {
         var options: [SyllableOption] = []
         var seen: Set<String> = []
-        func add(_ reading: String, _ end: Int, _ penalty: Double) {
+        func add(_ reading: String, _ end: Int, _ penalty: Double, isStrong: Bool = false) {
             guard lexicon.syllables.contains(reading), seen.insert("\(reading)@\(end)").inserted else { return }
-            options.append(SyllableOption(reading: reading, end: end, penalty: penalty))
+            options.append(SyllableOption(reading: reading, end: end, penalty: penalty, isStrong: isStrong))
         }
         if let exact = Dachen.syllable(in: keys, from: start) { add(exact.reading, exact.end, 0) }
         guard weights.typoTolerance else { return options }
@@ -635,11 +637,14 @@ extension Segmenter {
         guard start < keys.count, Dachen.tones[keys[start]] == nil else { return options }
 
         // 1. 順序顛倒：接下來 2–4 個鍵剛好是「聲母、介音、韻母各至多一個＋一個聲調」，只是順序不對。
+        // 除了聲調還夾著數字或符號鍵（k27 的 2、ur8 的 8）時，英文不會這樣打：單字也修；
+        // 空白當一聲的只修三個鍵加空白的（ur8 ），兩個鍵的（u2 ）太短，可能是代號。
         for length in 2...4 where start + length <= keys.count {
             let range = start..<start + length
-            guard keys[range].contains(where: isToneDigit), hasLetterSymbol(range),
-                  let reading = Dachen.syllable(fromUnordered: keys[range]) else { continue }
-            add(reading, range.upperBound, weights.typoOrder)
+            let hasNonLetterSymbol = keys[range].contains { Dachen.isSymbolKey($0) && !$0.isLetter && Dachen.tones[$0] == nil }
+            guard keys[range].contains(where: isToneDigit) || (hasNonLetterSymbol && length == 4 && keys[range.upperBound - 1] == " "),
+                  hasLetterSymbol(range), let reading = Dachen.syllable(fromUnordered: keys[range]) else { continue }
+            add(reading, range.upperBound, weights.typoOrder, isStrong: hasNonLetterSymbol)
         }
 
         // 2. 漏按聲調：2–3 個注音鍵後面緊接著一個打對的、帶數字聲調的音節。

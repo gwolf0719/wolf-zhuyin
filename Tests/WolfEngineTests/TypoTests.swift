@@ -27,6 +27,8 @@ private func lines(_ path: String) -> [String] {
     ("sy3cl3", "你好"),      // u 按成隔壁的 y
     ("ji3y49ru8 ", "我在家"), // 中間的字順序顛倒
     ("vu,4vu7,", "謝謝"),    // 結尾兩鍵顛倒
+    ("ur8 g;4", "加上"),     // 空白當一聲、順序顛倒，夾著數字鍵 8
+    ("ji3283nj04k27", "我打算的"), // 單字順序顛倒，夾著數字鍵 2：不必成詞也修
 ])
 func recoversMistypedZhuyin(keys: String, expected: String) {
     #expect(text(keys) == expected)
@@ -126,4 +128,10 @@ func recoversMistypedZhuyin(keys: String, expected: String) {
     for (kind, floor) in ["順序顛倒": 0.45, "漏按聲調": 0.38, "按到隔壁": 0.20] {
         #expect(Double(recovered[kind]!) / Double(total[kind]!) >= floor, "\(kind)")
     }
+}
+
+/// 夾數字的代號不可以被當成打錯的注音。
+@Test(arguments: ["x86", "v3", "k8s", "e2e", "p2p", "h2o", "u2 ", "b2b ", "ok2 "])
+func codesWithDigitsStayAsTyped(keys: String) {
+    #expect(segmenter.segment(keys).map(\.text).joined() == keys)
 }
