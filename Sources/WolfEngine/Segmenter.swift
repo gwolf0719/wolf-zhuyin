@@ -48,6 +48,8 @@ public struct Segmenter: Sendable {
     public var history: UserHistory?
     /// 使用者個人的打錯習慣；有設定時，他常犯的錯會直接修正。
     public var typos: UserTypos?
+    /// 輸出時在中文與英文、數字之間自動加空白。只影響顯示與送出的文字，不影響分段與學習。
+    public var autoSpace = false
     public let english: EnglishWords
     public var weights = Weights()
 
@@ -106,6 +108,8 @@ public struct Segmenter: Sendable {
         var isRawKey = false
         /// 結尾打到一半的音節。
         var isPending = false
+        /// 自動空白：輸出時在這段後面補一個空白。不算進這段的文字，所以游標位置照字計算。
+        var trailingSpace = false
     }
 
     public struct Candidate: Sendable, Equatable {
@@ -142,15 +146,16 @@ public struct Segmenter: Sendable {
     ///   - showPending: 結尾還沒按聲調的音節要不要顯示成注音符號（組字區用 true，送出用 false）。
     public func segment(_ input: String, afterChinese: Bool = true, showPending: Bool = false) -> [Segment] {
         var segments: [Segment] = []
-        for piece in pieces(Array(input), afterChinese: afterChinese, showPending: showPending) {
+        for piece in spaced(pieces(Array(input), afterChinese: afterChinese, showPending: showPending)) {
+            let text = piece.trailingSpace ? piece.text + " " : piece.text
             if let last = segments.last, last.language == piece.language {
                 segments[segments.count - 1] = Segment(
                     language: piece.language,
                     keys: last.keys.lowerBound..<piece.keys.upperBound,
-                    text: last.text + piece.text
+                    text: last.text + text
                 )
             } else {
-                segments.append(Segment(language: piece.language, keys: piece.keys, text: piece.text))
+                segments.append(Segment(language: piece.language, keys: piece.keys, text: text))
             }
         }
         return segments
@@ -175,6 +180,27 @@ public struct Segmenter: Sendable {
             let reading = tail.map(\.reading).joined(separator: "-")
             for entry in entries(for: reading) where seen.insert(entry.text).inserted {
                 result.append(Candidate(text: entry.text, start: tail.first!.start, reading: reading))
+            }
+        }
+        return result
+    }
+
+    /// 開啟自動空白時，在「中文字 ↔ 英文字母或數字」相鄰的地方，於前一段結尾補一個空白。
+    /// 標點、空白旁邊不補；已經有空白的不重複補。
+    private func spaced(_ pieces: [Piece]) -> [Piece] {
+        guard autoSpace, pieces.count >= 2 else { return pieces }
+        func isHan(_ character: Character?) -> Bool {
+            character.map { !$0.isASCII && $0.isLetter } ?? false
+        }
+        func isLatin(_ character: Character?) -> Bool {
+            character.map { $0.isASCII && ($0.isLetter || $0.isNumber) } ?? false
+        }
+        var result = pieces
+        for index in result.indices.dropLast() {
+            let before = result[index].text.last
+            let after = result[index + 1].text.first
+            if (isHan(before) && isLatin(after)) || (isLatin(before) && isHan(after)) {
+                result[index].trailingSpace = true
             }
         }
         return result
@@ -237,7 +263,7 @@ public struct Segmenter: Sendable {
         let keys = Array(input)
         var text = ""
         var stops = [(key: 0, offset: 0)]
-        for piece in pieces(keys, afterChinese: afterChinese, showPending: true) {
+        for piece in spaced(pieces(keys, afterChinese: afterChinese, showPending: true)) {
             let base = text.count
             text += piece.text
             if piece.reading != nil, piece.syllableEnds.count == piece.text.count {
@@ -246,6 +272,8 @@ public struct Segmenter: Sendable {
                 for index in 1...piece.text.count { stops.append((piece.keys.lowerBound + index, base + index)) }
             }
             if stops.last?.key != piece.keys.upperBound { stops.append((piece.keys.upperBound, text.count)) }
+            // 補上的空白不是可以停的位置。
+            if piece.trailingSpace { text += " " }
         }
         return (text, stops)
     }

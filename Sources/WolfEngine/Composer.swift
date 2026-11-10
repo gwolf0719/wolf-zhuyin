@@ -88,6 +88,8 @@ public struct Composer: Sendable {
     /// 上一次送出的文字是否以中文結尾；決定下一段開頭的標點用全形還是半形。
     private var afterChinese = true
     private var panel: Panel?
+    /// 關掉時不提示也不攔 Tab。
+    public var predictionsEnabled = true
     /// 剛退格刪掉的按鍵，以及之後在同一個位置重打的按鍵。用來學使用者的打錯習慣。
     private var fix: (deleted: [Character], retyped: [Character], position: Int)?
 
@@ -121,7 +123,7 @@ public struct Composer: Sendable {
 
     /// 游標在結尾、選字窗沒開時才預測。
     private var currentPredictions: [String] {
-        guard panel == nil, !keys.isEmpty, cursor == keys.count else { return [] }
+        guard predictionsEnabled, panel == nil, !keys.isEmpty, cursor == keys.count else { return [] }
         return segmenter.predictions(String(keys), afterChinese: afterChinese)
     }
 
