@@ -165,6 +165,11 @@ public struct Segmenter: Sendable {
 
     /// 不認英文字（強制轉成中文時用）。
     var englishEnabled = true
+    /// 哪裡都可以修正打錯（強制轉成中文時用）；平常只修沒認出來的按鍵。
+    var correctsAnywhere = false
+    /// 選字窗裡「可能是打錯」的候選最多幾個，放在同音字前幾名之後。
+    static let correctionSlots = 2
+    static let correctionSlot = 5
 
     /// 使用者最近選的字詞要有多少優勢：比詞庫第一名高這麼多，而且至少有 `learnedFloor` 分，
     /// 讓學到的新詞（詞庫裡沒有的組合）贏過拆成單字的走法。
@@ -256,6 +261,16 @@ public struct Segmenter: Sendable {
             typed.map { Candidate(text: $0, start: syllable.start, reading: nil, inserted: String($0.map(Self.literal))) },
             Candidate(text: syllable.reading, start: syllable.start, reading: nil),
         ] as [Candidate?]).compactMap { $0 }.filter { seen.insert($0.text).inserted }
+        // 可能是打錯：這個字的按鍵照容錯規則修正後的讀音（vu.3 朽 → u.3 有）。打對的字不會自動改，改由這裡選。
+        var corrections: [Candidate] = []
+        if weights.typoTolerance {
+            for option in syllableOptions(in: keys, from: syllable.start) where option.penalty < 0 && option.end == syllable.end {
+                guard let entry = entries(for: option.reading).first, seen.insert(entry.text).inserted else { continue }
+                corrections.append(Candidate(text: entry.text, start: syllable.start, reading: option.reading))
+                if corrections.count == Self.correctionSlots { break }
+            }
+        }
+        result.insert(contentsOf: corrections, at: min(result.count, Self.correctionSlot))
         result.insert(contentsOf: switches, at: min(result.count, Self.languageSwitchSlot))
         return result
     }
@@ -280,6 +295,7 @@ public struct Segmenter: Sendable {
         var result: [Candidate] = []
         var chinese = self
         chinese.englishEnabled = false
+        chinese.correctsAnywhere = true
         let forcedPieces = chinese.pieces(Array(span), afterChinese: afterChinese, showPending: false)
         let forced = forcedPieces.map(\.text).joined()
         if forced.contains(where: { !$0.isASCII && $0.isLetter }) {
@@ -447,8 +463,27 @@ public struct Segmenter: Sendable {
     }
 
     /// 整串按鍵分數最高的解讀。
+    /// 整串按鍵分數最高的解讀。打得出正確注音的照打，不自動修正（使用者 2026-11-10 定案）：
+    /// 先不修正地轉換一次，只有轉換後剩下「沒認出來的字母鍵」時，才允許修正，而且修正必須蓋到那些鍵。
+    /// 其他可能的修正放在選字窗裡（`candidates`）。
     private func bestPath(_ keys: [Character]) -> [Edge] {
         guard !keys.isEmpty else { return [] }
+        guard weights.typoTolerance else { return bestPath(keys, unexplained: []) }
+        if correctsAnywhere { return bestPath(keys, unexplained: Set(keys.indices)) }
+        var strict = self
+        strict.weights.typoTolerance = false
+        let path = strict.bestPath(keys, unexplained: [])
+        // 沒認出來的：落單的字母鍵，以及緊接在字母後面、落單的聲調數字（us3 的 3：英文字後面不會直接接 3）。
+        let unexplained = Set(path.filter { edge in
+            guard edge.isRawKey else { return false }
+            let key = keys[edge.start]
+            return key.isASCIILetter || ("3467".contains(key) && edge.start > 0 && keys[edge.start - 1].isASCIILetter)
+        }.map(\.start))
+        return unexplained.isEmpty ? path : bestPath(keys, unexplained: unexplained)
+    }
+
+    /// - Parameter unexplained: 不修正時沒認出來的字母鍵位置；修正的邊必須至少蓋到其中一個。
+    private func bestPath(_ keys: [Character], unexplained: Set<Int>) -> [Edge] {
         // 狀態＝（最後一條邊的語言, 最後一個字）。記最後一個字是為了算前後字搭配：
         // 「明天」後面接「再」或「在」，分數不同。每個位置只有幾條邊結束，狀態數量很小。
         struct State: Hashable {
@@ -484,6 +519,8 @@ public struct Segmenter: Sendable {
                     // 緊接在英數字後面的不修，避免把英文字的後半段改成中文。
                     if edge.isCorrection, position > 0, state.language == .english,
                        keys[position - 1].isLetter || keys[position - 1].isNumber { continue }
+                    // 修正只能用在沒認出來的按鍵上，不可以蓋掉本來就打得對的內容。
+                    if edge.isCorrection, !(edge.start..<edge.end).contains(where: unexplained.contains) { continue }
                     // 標點邊維持前一個語言狀態，不算切換。
                     if edge.punctuation != nil, state.language != edge.language { continue }
                     let switched = position > 0 && state.language != edge.language

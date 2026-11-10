@@ -25,8 +25,6 @@ private func lines(_ path: String) -> [String] {
     ("us3cl3", "你好"),      // 前兩鍵顛倒
     ("sucl3", "你好"),       // 漏按聲調
     ("sy3cl3", "你好"),      // u 按成隔壁的 y
-    ("ji3y49ru8 ", "我在家"), // 中間的字順序顛倒
-    ("vu,4vu7,", "謝謝"),    // 結尾兩鍵顛倒
     ("ur8 g;4", "加上"),     // 空白當一聲、順序顛倒，夾著數字鍵 8
     ("ji3283nj04k27", "我打算的"), // 單字順序顛倒，夾著數字鍵 2：不必成詞也修
 ])
@@ -125,7 +123,9 @@ func recoversMistypedZhuyin(keys: String, expected: String) {
         let rate = Double(recovered[kind]!) / Double(max(total[kind]!, 1))
         print("打錯還原率 \(kind)：\(recovered[kind]!)/\(total[kind]!)（\(String(format: "%.1f", rate * 100))%）")
     }
-    for (kind, floor) in ["順序顛倒": 0.45, "漏按聲調": 0.38, "按到隔壁": 0.20] {
+    // 2026-11-10 改成「打得出正確注音的照打」之後，按到隔壁鍵多半剛好是另一個正確的音節，
+    // 不再自動修（改由選字窗提供），所以這一項從 21% 降到 17%。這是刻意的取捨。
+    for (kind, floor) in ["順序顛倒": 0.45, "漏按聲調": 0.38, "按到隔壁": 0.17] {
         #expect(Double(recovered[kind]!) / Double(total[kind]!) >= floor, "\(kind)")
     }
 }
@@ -177,3 +177,37 @@ func typoKindClassification(mistyped: String, intended: String, kind: UserTypos.
     // 「脆弱」：漏按 ㄨ。
     #expect(text("ho4bji4") == "脆弱")
 }
+
+/// 打得出正確注音的照打，不自動修正（夾數字的也一樣：自9 是正確的解讀）。修正改由選字窗提供。
+@Test func validInputIsNeverAutoCorrected() {
+    #expect(text("vu.3") == "朽")
+    #expect(text("vu,4vu7,") == "謝西，")  // 西＋逗號是正確的解讀
+    #expect(text("ji3y49ru8 ") == "我自9家")
+    #expect(text("ji32u/4xk75ek41u042; ") == "我定了5個便當")
+    // 有使用者習慣時也一樣。
+    var personal = segmenter
+    personal.typos = UserTypos(corrections: [
+        "vu.3": ["u.3": 3], "urup4": ["rup4": 3], "uv84": ["vu84": 3], "ho4": ["hjo4": 3],
+    ])
+    #expect(personal.typos?.habits == [.reordered, .extraKey, .missingKey])
+    #expect(personal.segment("vu.3").map(\.text).joined() == "朽")
+    #expect(personal.segment("ji32u/4xk75ek41u042; ").map(\.text).joined() == "我定了5個便當")
+    // 選字窗裡有修正的候選。
+    #expect(segmenter.candidates("vu.3").contains { $0.text == "有" })
+}
+
+/// 不變式：詞庫常用詞照標準按法打，套上各種打錯習慣後結果不變。
+@Test func habitsNeverChangeCorrectInput() {
+    var personal = segmenter
+    personal.typos = UserTypos(corrections: ["uv84": ["vu84": 3], "urup4": ["rup4": 3], "ho4": ["hjo4": 3]])
+    let evaluation = Evaluation(segmenter: segmenter)
+    var wrong: [String] = []
+    var index = 0
+    for entries in segmenter.lexicon.entries.values {
+        index += 1
+        guard index % 7 == 0, let entry = entries.first, entry.score > -5.5, let typed = evaluation.type(entry.text) else { continue }
+        if personal.segment(typed.keys).map(\.text).joined() != text(typed.keys) { wrong.append(typed.keys) }
+    }
+    #expect(wrong.isEmpty, "\(wrong.prefix(20))")
+}
+

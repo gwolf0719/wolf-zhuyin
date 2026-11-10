@@ -103,6 +103,30 @@ case "personal":
     }
     print("打錯紀錄 \(typos.count) 筆：一般規則修好 \(generic)，加上習慣（不含該筆本身）修好 \(withHabits)")
 
+    // 反方向：正確的輸入套上個人紀錄後，不可以被改掉。詞庫常用詞與評測句子各打一次比較。
+    var personal = segmenter
+    personal.typos = UserTypos(corrections: typos)
+    var checked = 0
+    var changed: [String] = []
+    var samples: [String] = []
+    for entries in segmenter.lexicon.entries.values {
+        if let entry = entries.first, entry.score > -5.5 { samples.append(entry.text) }
+    }
+    for path in ["Eval/dev.txt", "Eval/test.txt"] {
+        if let content = try? String(contentsOfFile: path, encoding: .utf8) {
+            samples += content.split(separator: "\n").filter { !$0.hasPrefix("#") }.map(String.init)
+        }
+    }
+    for text in samples {
+        guard let typed = evaluation.type(text) else { continue }
+        checked += 1
+        let plain = segmenter.segment(typed.keys).map(\.text).joined()
+        let mine = personal.segment(typed.keys).map(\.text).joined()
+        if plain != mine { changed.append("\(typed.keys)：\(plain) → \(mine)") }
+    }
+    print("正確輸入 \(checked) 筆：套上個人紀錄後結果改變 \(changed.count) 筆")
+    if verbose { changed.prefix(60).forEach { print("    " + $0) } }
+
     let history = UserHistory(fileURL: directory.appendingPathComponent("history.json")).all
     var phrases = 0, phrasesCorrect = 0
     for (context, followers) in history where context.count == 2 && !context.contains(where: \.isASCII) {

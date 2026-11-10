@@ -396,6 +396,12 @@ public struct Composer: Sendable {
             // 選定的文字直接寫進緩衝，取代原本那幾個按鍵；之後不再被重新轉換。
             learn(chosen, after: String(keys[..<chosen.start]))
             let inserted = Array(chosen.separator + (chosen.inserted ?? chosen.text))
+            // 從選字窗選了「可能是打錯」的候選：記成一次更正，累積成打錯習慣。
+            let original = Array(keys[chosen.start..<cursor])
+            if let reading = chosen.reading, !reading.contains("-"), original.allSatisfy(\.isASCII),
+               let canonical = Dachen.keys(forReading: reading), UserTypos.kind(original, Array(canonical)) != nil {
+                segmenter.typos?.learn(mistyped: String(original), intended: canonical)
+            }
             // 中文候選一個字對一個音節時，記下每個字的讀音。
             let syllables = chosen.reading?.split(separator: "-").map(String.init) ?? []
             let newNotes: [String?] = chosen.separator.isEmpty && syllables.count == inserted.count

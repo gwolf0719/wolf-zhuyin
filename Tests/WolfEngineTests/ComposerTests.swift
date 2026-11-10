@@ -633,3 +633,16 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     // 強制轉回中文的字一樣可以再選。
     #expect(composer.handle(.down).candidates.contains("妳"))
 }
+
+/// 打對的字不自動改；按 ↓ 可以選「可能是打錯」的候選，選了會記成一次更正。
+@Test func correctionsAreOfferedInPanel() {
+    var learning = segmenter
+    learning.typos = UserTypos()
+    var composer = Composer(segmenter: learning)
+    #expect(type("vu.3", composer: &composer).marked == "朽")
+    let panel = composer.handle(.down)
+    let index = panel.candidates.firstIndex(of: "有")
+    #expect(index != nil && index! < 9)
+    #expect(composer.handle(.character(Character("\(index! + 1)"))).marked == "有")
+    #expect(learning.typos?.all["vu.3"] == ["u.3": 1])
+}
