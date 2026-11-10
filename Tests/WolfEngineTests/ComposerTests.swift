@@ -53,9 +53,18 @@ private func type(_ keys: String, then last: Composer.Key? = nil, composer: inou
     #expect(type("su", composer: &composer).marked == "你ㄋㄧ")
     #expect(type("3", composer: &composer).marked == "你你")
     _ = composer.handle(.escape)
-    // 英文字照一般習慣一次刪一個字母，詞表沒收的也是。
+    // 被判成英文、純字母的亂碼也整段刪（「新」打成 uvp 少按空白之前的樣子）。
+    #expect(type("su3uvk", composer: &composer).marked == "你uvk")
+    #expect(composer.handle(.backspace).marked == "你")
+    // 英文字黏著落單的聲調（us3）：整段刪。
+    #expect(type("us3", composer: &composer).marked == "你us3")
+    #expect(composer.handle(.backspace).marked == "你")
+    _ = composer.handle(.escape)
+    // 真的英文字一次刪一個字母，刪到一半（hel）也是。
     #expect(type("hello", composer: &composer).marked == "hello")
     #expect(composer.handle(.backspace).marked == "hell")
+    #expect(composer.handle(.backspace).marked == "hel")
+    #expect(composer.handle(.backspace).marked == "he")
     _ = composer.handle(.escape)
     #expect(type("OpenAI", composer: &composer).marked == "OpenAI")
     #expect(composer.handle(.backspace).marked == "OpenA")

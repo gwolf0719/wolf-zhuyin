@@ -451,9 +451,10 @@ public struct Segmenter: Sendable {
     /// 按一次退格該刪掉結尾幾個按鍵。以「畫面上的一個單位」為準：
     /// - 打到一半的音節：一個注音符號。
     /// - 已完成的中文字：整個字（含聲調）。
-    /// - 沒被認出來的一串按鍵（多半是注音打錯）：整串。判斷依據是裡面有數字或注音用到的符號鍵；
-    ///   純字母的不算，那可能是詞表沒收的英文字，照一般習慣一次刪一個字母。
-    /// - 其他（英文字、標點、空白）：一個字元。
+    /// - 被判成英文、但其實沒認出來的一段（多半是注音打錯：uv、us3、q3w）：整段一次刪掉，
+    ///   不必一個字母一個字母退（使用者 2026-11-10 再次確認）。「一段」是結尾連在一起、沒有空白的英數字。
+    /// - 例外，一次刪一個字元：詞表認得的英文字或常用字的開頭（hello、hel）、純數字（1234）、
+    ///   含大寫字母的（OpenAI、Costco：大寫不可能是注音，是真的在打英文）、標點、空白。
     public func backspaceLength(_ input: String, afterChinese: Bool = true) -> Int {
         let keys = Array(input)
         let all = pieces(keys, afterChinese: afterChinese, showPending: true)
@@ -463,12 +464,17 @@ public struct Segmenter: Sendable {
             let lastSyllableStart = last.syllableEnds.dropLast().last ?? last.keys.lowerBound
             return keys.count - lastSyllableStart
         }
-        guard last.isRawKey, keys[last.keys.lowerBound] != " " else { return 1 }
-        let run = all.reversed().prefix { $0.isRawKey && keys[$0.keys.lowerBound] != " " }
-        // 全是數字的是真的數字（1234），一次刪一位。
-        let isNumber = run.allSatisfy { keys[$0.keys.lowerBound].isNumber }
-        let looksLikeMistypedZhuyin = !isNumber && run.contains { !keys[$0.keys.lowerBound].isLetter }
-        return looksLikeMistypedZhuyin ? run.count : 1
+        func isAlphanumeric(_ piece: Piece) -> Bool {
+            piece.reading == nil && !piece.isPending
+                && piece.keys.allSatisfy { keys[$0].isASCII && (keys[$0].isLetter || keys[$0].isNumber) }
+        }
+        let token = all.reversed().prefix(while: isAlphanumeric)
+        guard token.contains(where: \.isRawKey) else { return 1 }
+        let characters = token.reversed().flatMap { $0.keys.map { keys[$0] } }
+        if characters.allSatisfy(\.isNumber) || characters.contains(where: \.isUppercase) { return 1 }
+        // 英文字刪到一半（hello → hel）：還是某個常用字的開頭，繼續一次刪一個字母。
+        if characters.allSatisfy(\.isLetter), english.isWordOrPrefix(String(characters)) { return 1 }
+        return characters.count
     }
 
     func pieces(_ keys: [Character], afterChinese: Bool, showPending: Bool) -> [Piece] {
