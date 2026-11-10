@@ -135,3 +135,17 @@ func languageAccuracyDoesNotRegress(path: String, threshold: Double) throws {
     }
     #expect(unstable <= 4)
 }
+
+/// 同分的同音字（嗙／耪）每次都要選到同一個，否則組字區顯示的和送出的會不一樣。
+@Test func tiedHomophonesAreChosenDeterministically() {
+    let evaluation = Evaluation(segmenter: segmenter)
+    for text in ["嗙", "耪"] {
+        guard let keys = evaluation.type(text)?.keys else { continue }
+        // 送出用的和組字區顯示用的（結尾顯示成注音）兩種轉換，第一個字要一樣。
+        let first = segmenter.segment(keys + "v/f").map(\.text).joined().first
+        for _ in 0..<20 {
+            #expect(segmenter.segment(keys + "v/f").map(\.text).joined().first == first)
+            #expect(segmenter.segment(keys + "v/f", showPending: true).map(\.text).joined().first == first)
+        }
+    }
+}

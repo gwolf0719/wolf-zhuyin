@@ -15,6 +15,18 @@ public final class UserPhrases: @unchecked Sendable {
         phrases = file.load() ?? [:]
     }
 
+    /// 目前所有的選字紀錄（讀音 → 選過的字詞，最近的在前）。
+    public var all: [String: [String]] { lock.withLock { phrases } }
+
+    /// 刪掉一筆選字紀錄。
+    public func remove(reading: String, text: String) {
+        lock.withLock {
+            phrases[reading]?.removeAll { $0 == text }
+            if phrases[reading]?.isEmpty == true { phrases[reading] = nil }
+        }
+        file.save { [self] in lock.withLock { phrases } }
+    }
+
     /// 等排定的寫入完成。
     public func flush() { file.flush() }
 

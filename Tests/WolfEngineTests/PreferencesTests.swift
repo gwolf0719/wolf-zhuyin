@@ -80,3 +80,42 @@ private func type(_ keys: String, _ composer: inout Composer) -> Composer.Result
     var composer = preferences.composer(lexicon: lexicon, stores: nil)
     #expect(type("s3ucl3", &composer).marked == "s3u好")
 }
+
+/// 學習紀錄可以列出來、一筆一筆刪掉；刪掉後不再影響打字，重新載入也不會回來。
+@Test func learnedEntriesCanBeListedAndRemoved() throws {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("wolf-test-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: folder) }
+    func open() -> Preferences.Stores {
+        Preferences.Stores(
+            phrases: UserPhrases(fileURL: folder.appendingPathComponent("user-phrases.json")),
+            history: UserHistory(fileURL: folder.appendingPathComponent("history.json")),
+            typos: UserTypos(fileURL: folder.appendingPathComponent("typos.json"))
+        )
+    }
+    let stores = open()
+    stores.phrases.learn(reading: "ㄗㄞˋ", text: "再")
+    stores.history.record(["不", "好", "吃"])
+    stores.history.record(["不", "好", "吃"])
+    stores.typos.learn(mistyped: "s3u", intended: "su3")
+
+    let phrase = try #require(stores.entries(.phrase).first)
+    #expect(phrase.left == "ㄗㄞˋ" && phrase.right == "再" && phrase.isActive)
+    let followers = stores.entries(.history)
+    #expect(followers.contains { $0.left == "不好" && $0.right == "吃" && $0.count == 2 && $0.isActive })
+    #expect(followers.contains { $0.left == "（句子開頭）" && $0.right == "不" })
+    let typo = try #require(stores.entries(.typo).first)
+    #expect(typo.left == "s3u" && typo.right == "ㄋㄧˇ（su3）" && typo.isActive)
+
+    stores.remove(phrase)
+    stores.remove(typo)
+    for entry in followers where entry.right == "吃" { stores.remove(entry) }
+    #expect(stores.phrases.texts(for: "ㄗㄞˋ").isEmpty)
+    #expect(stores.typos.intended(for: "s3u") == nil)
+    #expect(stores.history.likely(after: ["不", "好"]).isEmpty)
+
+    stores.flush()
+    let reloaded = open()
+    #expect(reloaded.entries(.phrase).isEmpty)
+    #expect(reloaded.entries(.typo).isEmpty)
+    #expect(!reloaded.entries(.history).contains { $0.right == "吃" })
+}

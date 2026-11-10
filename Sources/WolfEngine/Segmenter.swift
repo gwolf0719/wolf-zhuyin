@@ -538,9 +538,15 @@ public struct Segmenter: Sendable {
 
         // 每個位置可以解讀成哪些音節，同一次轉換裡會被不同起點的詞重複問到，算一次就好。
         var options = [[SyllableOption]?](repeating: nil, count: keys.count + 1)
+        // 同分時要有固定的勝負：字典的走訪順序每次不一定相同，會讓組字區顯示的和送出的選到不同的同音字。
+        // 所以狀態一律照固定順序走訪，同分時先到的贏。
+        func ordered(_ states: [State: Entry]) -> [(key: State, value: Entry)] {
+            states.sorted { ($0.key.language == .chinese ? 0 : 1, String($0.key.last)) < ($1.key.language == .chinese ? 0 : 1, String($1.key.last)) }
+        }
         for position in 0..<keys.count where !best[position].isEmpty {
+            let states = ordered(best[position])
             for edge in edges(in: keys, from: position, options: &options) {
-                for (state, entry) in best[position] {
+                for (state, entry) in states {
                     // 修正打錯的邊只能出現在中文語境：開頭、中文後面，或空白與標點後面。
                     // 緊接在英數字後面的不修，避免把英文字的後半段改成中文。
                     if edge.isCorrection, position > 0, state.language == .english,
@@ -570,7 +576,12 @@ public struct Segmenter: Sendable {
         }
         var path: [Edge] = []
         var position = keys.count
-        var state = best[position].max { finalScore($0.key, $0.value) < finalScore($1.key, $1.value) }?.key
+        var state: State?
+        var top = -Double.infinity
+        for (candidate, entry) in ordered(best[position]) where finalScore(candidate, entry) > top {
+            top = finalScore(candidate, entry)
+            state = candidate
+        }
         while position > 0, let current = state, let step = best[position][current], let edge = step.edge {
             path.append(edge)
             position = edge.start

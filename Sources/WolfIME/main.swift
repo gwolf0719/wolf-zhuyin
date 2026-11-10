@@ -8,6 +8,8 @@ import WolfEngine
 //   WolfZhuyin --enable     把它加入使用者的輸入方式（等同在系統設定手動加入）
 //   WolfZhuyin --check-update  立刻檢查並安裝新版
 //   WolfZhuyin --settings   開啟設定視窗，關閉後結束程式
+//   WolfZhuyin --learned <資料夾>  用指定資料夾裡的紀錄開「學習紀錄」視窗（驗收畫面用；
+//                           真正的紀錄只能從輸入法選單開，因為要和常駐的輸入法共用記憶體裡的那一份）
 //   WolfZhuyin --version    印出版本
 //   WolfZhuyin --status     印出系統是否認得、是否已啟用
 // 不帶參數時由系統啟動，作為輸入法伺服器常駐。
@@ -24,6 +26,25 @@ case "--settings":
     app.setActivationPolicy(.regular)
     SettingsWindow.shared.terminatesOnClose = true
     SettingsWindow.shared.show()
+    app.run()
+    exit(0)
+
+case "--learned":
+    guard let path = CommandLine.arguments.dropFirst(2).first else {
+        print("用法：WolfZhuyin --learned <資料夾>")
+        exit(2)
+    }
+    let folder = URL(fileURLWithPath: path)
+    let app = NSApplication.shared
+    app.setActivationPolicy(.regular)
+    let viewer = LearnedWindow(stores: Preferences.Stores(
+        phrases: UserPhrases(fileURL: folder.appendingPathComponent("user-phrases.json")),
+        history: UserHistory(fileURL: folder.appendingPathComponent("history.json")),
+        typos: UserTypos(fileURL: folder.appendingPathComponent("typos.json"))
+    ))
+    viewer.terminatesOnClose = true
+    LearnedWindow.shared = viewer
+    viewer.show(kind: LearnedEntry.Kind(rawValue: Int(CommandLine.arguments.dropFirst(3).first ?? "0") ?? 0) ?? .phrase)
     app.run()
     exit(0)
 

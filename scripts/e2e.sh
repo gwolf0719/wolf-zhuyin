@@ -1,8 +1,21 @@
 #!/bin/bash
 # 在真實文字視窗裡切到已安裝的狼注音並送按鍵。視窗會短暫搶走焦點，所以使用者正在操作時會自動略過。
-# 選字那一句只選第一個候選（等於預設值），因為這裡會動到真實的使用者選字紀錄。
 set -uo pipefail
 cd "$(dirname "$0")/.."
+
+# 測試打的字不可以記進使用者的學習紀錄（2026-11-10 發現「你好」被測試記了 66 次）。
+# 測試期間關掉學習，結束時不管成功失敗都恢復原本的設定。輸入法在切換進來時會重讀設定。
+DOMAIN=tw.foso.inputmethod.WolfZhuyin
+previous_learning="$(defaults read "$DOMAIN" Learning 2>/dev/null || echo unset)"
+restore_learning() {
+    if [[ "$previous_learning" == unset ]]; then
+        defaults delete "$DOMAIN" Learning 2>/dev/null || true
+    else
+        defaults write "$DOMAIN" Learning -bool "$([[ "$previous_learning" == 1 ]] && echo true || echo false)"
+    fi
+}
+trap restore_learning EXIT
+defaults write "$DOMAIN" Learning -bool false
 
 failed=0
 skipped=0

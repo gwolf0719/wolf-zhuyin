@@ -31,6 +31,15 @@ public final class UserHistory: @unchecked Sendable {
     /// 目前所有的用詞紀錄（評測工具用）。
     public var all: [String: [String: Int]] { lock.withLock { following } }
 
+    /// 刪掉一筆用詞紀錄（某段前文後面接的某個詞）。
+    public func remove(context: String, next: String) {
+        lock.withLock {
+            following[context]?[next] = nil
+            if following[context]?.isEmpty == true { following[context] = nil }
+        }
+        file.save { [self] in lock.withLock { following } }
+    }
+
     /// 等排定的寫入完成。
     public func flush() { file.flush() }
 

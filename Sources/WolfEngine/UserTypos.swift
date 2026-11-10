@@ -50,6 +50,15 @@ public final class UserTypos: @unchecked Sendable {
     /// 目前所有的更正紀錄。
     public var all: [String: [String: Int]] { lock.withLock { corrections } }
 
+    /// 刪掉一筆打錯紀錄。
+    public func remove(mistyped: String, intended: String) {
+        lock.withLock {
+            corrections[mistyped]?[intended] = nil
+            if corrections[mistyped]?.isEmpty == true { corrections[mistyped] = nil }
+        }
+        file.save { [self] in lock.withLock { corrections } }
+    }
+
     /// 等排定的寫入完成。
     public func flush() { file.flush() }
 

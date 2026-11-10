@@ -45,12 +45,20 @@ final class WolfInputController: IMKInputController {
     override func menu() -> NSMenu! {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "狼注音設定…", action: #selector(openSettings(_:)), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "學習紀錄…", action: #selector(openLearned(_:)), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "檢查更新", action: #selector(checkForUpdates(_:)), keyEquivalent: ""))
         return menu
     }
 
     @objc private func openSettings(_ sender: Any?) {
         SettingsWindow.shared.show()
+    }
+
+    @objc private func openLearned(_ sender: Any?) {
+        // 先把還在組字的內容送出，紀錄才是最新的。
+        if let client = client() { commitComposition(client) }
+        if LearnedWindow.shared == nil { LearnedWindow.shared = LearnedWindow(stores: sharedStores) }
+        LearnedWindow.shared?.show()
     }
 
     @objc private func checkForUpdates(_ sender: Any?) {
