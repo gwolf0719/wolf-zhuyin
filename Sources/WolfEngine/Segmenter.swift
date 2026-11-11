@@ -688,6 +688,7 @@ public struct Segmenter: Sendable {
     /// - 夾在英數字中間的（v1.2、app.json、don't）一律半形。
     /// - 右括號跟著對應的左括號。
     /// - 其餘看整串：有中文就全形，純英文就半形。
+    /// - 例外：純英文但接在中文後面時，括號用全形（使用者 2026-11-11：中文裡打 Mac』變成 Mac}）。
     private func punctuationForms(in path: [Edge], afterChinese: Bool) -> [Bool] {
         func isWord(_ edge: Edge) -> Bool { edge.punctuation == nil && edge.text != " " }
         func isAlphanumeric(_ character: Character?) -> Bool {
@@ -709,7 +710,13 @@ public struct Segmenter: Sendable {
             let next = index + 1 < path.count && path[index + 1].language == .english && isWord(path[index + 1])
                 ? path[index + 1].text.first : nil
             forms[index] = chineseContext && !(isAlphanumeric(previous) && isAlphanumeric(next))
-            if Self.closingBrackets.values.contains(key) { openBrackets.append((key, forms[index])) }
+            let opens = Self.closingBrackets.values.contains(key)
+            // 整段只有英文、但接在中文後面：括號照中文的（『Mac』、前面已送出『之後的 Mac』）。
+            // 緊貼在英數字後面的左括號是程式寫法（foo(、arr[），維持半形。
+            if !chineseContext, afterChinese, opens ? !isAlphanumeric(previous) : Self.closingBrackets[key] != nil {
+                forms[index] = true
+            }
+            if opens { openBrackets.append((key, forms[index])) }
         }
         return forms
     }

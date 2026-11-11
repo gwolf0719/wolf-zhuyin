@@ -720,6 +720,30 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     #expect(composer.handle(.enter).commit == "我[你]好")
 }
 
+/// 接在中文後面、整段只有英文時，括號仍是全形（使用者 2026-11-11：中文裡打 Mac』變成 Mac}）。
+@Test func bracketsAroundEnglishStayFullWidthAfterChinese() {
+    var composer = Composer(segmenter: segmenter)
+    _ = type("ji3m/4", composer: &composer)
+    #expect(composer.handle(.enter).commit == "我用")
+    #expect(type("{Mac}", composer: &composer).marked == "『Mac』")
+    #expect(composer.handle(.enter).commit == "『Mac』")
+    // 左括號先送出了，後面只剩英文加右括號。
+    _ = type("ji3m/4{", composer: &composer)
+    #expect(composer.handle(.enter).commit == "我用『")
+    #expect(type("Mac}", composer: &composer).marked == "Mac』")
+    #expect(type("[app]", composer: &composer).marked == "Mac』「app」")
+    _ = composer.handle(.enter)
+    // 緊貼在英數字後面的左括號是程式寫法，維持半形。
+    #expect(type("foo(1)", composer: &composer).marked == "foo(1)")
+    _ = composer.handle(.escape)
+    #expect(type("arr[0]", composer: &composer).marked == "arr[0]")
+    _ = composer.handle(.escape)
+    // 接在英文後面：照舊半形。
+    _ = type("hello", composer: &composer)
+    #expect(composer.handle(.enter).commit == "hello")
+    #expect(type("{app}", composer: &composer).marked == "{app}")
+}
+
 /// 標點改成半形之後還能改回全形，再改成半形也行（使用者 2026-11-11：『 變成 { 後切不回來）。
 @Test func punctuationCanBeSwitchedBackAndForth() {
     var composer = Composer(segmenter: segmenter)
