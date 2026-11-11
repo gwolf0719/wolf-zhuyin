@@ -26,8 +26,13 @@ public struct Lexicon: Sendable {
     /// 詞 → 最常見的讀音（評測時把文字轉回按鍵用）。
     private(set) var readings: [String: (reading: String, score: Double)] = [:]
 
+    public static let extraCharactersFile = "extra-characters.txt"
+
     public init(contentsOf url: URL) throws {
-        let content = try String(contentsOf: url, encoding: .utf8)
+        var content = try String(contentsOf: url, encoding: .utf8)
+        // 同一個資料夾的補充表：詞庫沒收的罕用字（饍…），分數最低，只排在選字窗最後。沒有這個檔也能用。
+        let extra = url.deletingLastPathComponent().appendingPathComponent(Self.extraCharactersFile)
+        if let more = try? String(contentsOf: extra, encoding: .utf8) { content += "\n" + more }
         for line in content.split(separator: "\n") {
             guard let first = line.first, first != "#", first != "_" else { continue }
             let fields = line.split(separator: " ")

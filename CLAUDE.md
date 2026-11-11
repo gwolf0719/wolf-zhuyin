@@ -8,7 +8,7 @@ macOS 專用注音輸入法（大千鍵盤）：自動中英切換、整句選�
   - `swift test` 直接跑會找不到 `Testing` 模組，一律用 `make test`（Makefile 已帶好框架路徑）。
   - 輸入法 `.app` 由 `scripts/build-app.sh` 手動組 bundle + ad-hoc 簽章，`make install` 裝進 `~/Library/Input Methods/` 並登記。
   - 改了輸入法程式後重裝，腳本會結束舊的 `WolfZhuyin` 行程，系統下次切到狼注音時才會載入新版。
-- 中文詞庫：`Data/mcbopomofo/data.txt`（小麥注音，MIT，見同目錄 NOTICE.md）。
+- 中文詞庫：`Data/mcbopomofo/data.txt`（小麥注音，MIT，見同目錄 NOTICE.md）＋同目錄 `extra-characters.txt`（詞庫沒收的罕用字，`scripts/gen-extra-characters.swift` 產生，不手改）。
 - 英文詞表：系統的 `/usr/share/dict/words` + `EnglishWords.swift` 內的常用字清單，沒有詞頻，是暫時方案。
 
 ## 驗證

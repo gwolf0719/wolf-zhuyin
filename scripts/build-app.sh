@@ -20,6 +20,7 @@ cp -R App/*.lproj "$APP/Contents/Resources/"
 cp App/Icon/WolfZhuyin.tiff "$APP/Contents/Resources/"
 cp .build/release/WolfIME "$APP/Contents/MacOS/WolfZhuyin"
 cp Data/mcbopomofo/data.txt "$APP/Contents/Resources/data.txt"
+cp Data/mcbopomofo/extra-characters.txt "$APP/Contents/Resources/extra-characters.txt"
 codesign --force --sign - "$APP"
 echo "已建置 $APP"
 

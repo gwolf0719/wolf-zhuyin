@@ -794,3 +794,19 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     composer.predictionsEnabled = false
     #expect(composer.predictionContext == nil)
 }
+
+/// 詞庫沒收的罕用字靠補充表打得出來，而且只排在同音字最後面，不影響平常的選字（使用者 2026-11-11：饍食光的「饍」）。
+@Test func rareCharactersComeFromExtraTable() {
+    var composer = Composer(segmenter: segmenter)
+    #expect(type("g04", composer: &composer).marked == "善")
+    var all: [String] = []
+    var panel = composer.handle(.down)
+    for _ in 0..<40 {
+        all += panel.candidates
+        let next = composer.handle(.right)
+        if next.candidates == panel.candidates { break }
+        panel = next
+    }
+    #expect(all.contains("饍"), "選字窗翻完沒有饍：\(all.count) 個")
+    #expect(all.firstIndex(of: "膳")! < all.firstIndex(of: "饍") ?? .max)
+}
