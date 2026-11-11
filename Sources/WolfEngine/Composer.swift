@@ -74,10 +74,12 @@ public struct Composer: Sendable {
     public static let symbolKey: Character = "\\"
 
     /// 符號表：第一頁是最常用的。
+    /// 半形的 [] 也放第一頁：中文裡 [ ] 鍵會變成「」，使用者（2026-11-11）常用半形的，要好打。
     static let chineseSymbols = [
-        "，", "。", "、", "？", "！", "：", "；", "「", "」",
-        "（", "）", "『", "』", "《", "》", "…", "—", "～",
-        "〈", "〉", "【", "】", "·", "％", "＋", "＝", "＠",
+        "，", "。", "、", "？", "！", "「", "」", "[", "]",
+        "：", "；", "（", "）", "『", "』", "《", "》", "…",
+        "—", "～", "〈", "〉", "【", "】", "·", "％", "＋",
+        "＝", "＠", "{", "}",
     ]
     static let englishSymbols = [
         ",", ".", "?", "!", ":", ";", "\"", "'", "-",
@@ -308,7 +310,11 @@ public struct Composer: Sendable {
         case .character(Self.symbolKey):
             let chinese = text(of: keys[..<cursor]).last.map { !$0.isASCII } ?? afterChinese
             let symbols = chinese ? Self.chineseSymbols : Self.englishSymbols
-            panel = Panel(items: symbols.map { Item(text: $0, start: cursor) }, isSymbols: true)
+            // 中文符號表裡的半形符號（[]）要照打：不包起來的話，接在中文後面又會被換成「」。
+            panel = Panel(items: symbols.map { symbol in
+                let asIs = chinese && symbol.allSatisfy(\.isASCII)
+                return Item(text: symbol, start: cursor, inserted: asIs ? String(symbol.map(Segmenter.literal)) : nil)
+            }, isSymbols: true)
             return state()
         case .character(let character):
             // 沒在組字時，空白就是空白。

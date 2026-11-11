@@ -290,7 +290,8 @@ private func type(_ keys: String, then last: Composer.Key? = nil, composer: inou
     #expect(positions == [4, 3, 2, 1, 0, 0])
     // 在開頭插入符號。
     _ = composer.handle(.character("\\"))
-    #expect(composer.handle(.character("8")).marked == "「你好Mac")
+    let quote = Composer.chineseSymbols.firstIndex(of: "「")! + 1
+    #expect(composer.handle(.character(Character("\(quote)"))).marked == "「你好Mac")
 }
 
 /// 不變式：游標永遠落在組字區文字的範圍內。
@@ -700,6 +701,23 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     #expect(index != nil)
     #expect(composer.handle(.character(Character("\(index! + 1)"))).marked == "我[]")
     #expect(composer.handle(.enter).commit == "我[]")
+}
+
+/// 中文裡用符號表打半形的 []：在第一頁，選了之後再打中文也不會變成「」。
+@Test func symbolPanelTypesHalfWidthBrackets() {
+    var composer = Composer(segmenter: segmenter)
+    _ = type("ji3", composer: &composer)
+    let panel = composer.handle(.character("\\"))
+    let open = panel.candidates.firstIndex(of: "[")
+    let close = panel.candidates.firstIndex(of: "]")
+    #expect(open != nil && close != nil, "第一頁沒有 []：\(panel.candidates)")
+    guard let open, let close else { return }
+    #expect(composer.handle(.character(Character("\(open + 1)"))).marked == "我[")
+    #expect(type("su3", composer: &composer).marked == "我[你")
+    _ = composer.handle(.character("\\"))
+    #expect(composer.handle(.character(Character("\(close + 1)"))).marked == "我[你]")
+    #expect(type("cl3", composer: &composer).marked == "我[你]好")
+    #expect(composer.handle(.enter).commit == "我[你]好")
 }
 
 /// 標點改成半形之後還能改回全形，再改成半形也行（使用者 2026-11-11：『 變成 { 後切不回來）。
