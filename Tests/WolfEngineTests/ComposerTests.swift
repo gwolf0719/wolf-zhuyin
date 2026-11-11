@@ -810,3 +810,17 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     #expect(all.contains("饍"), "選字窗翻完沒有饍：\(all.count) 個")
     #expect(all.firstIndex(of: "膳")! < all.firstIndex(of: "饍") ?? .max)
 }
+
+/// 被當成數字的 104 想改成中文時，選字窗直接列出同音字，一次就能選到「伴」（使用者 2026-11-11：伴獸家家酒）。
+@Test func numberCanBeSwitchedToAnyHomophone() {
+    var composer = Composer(segmenter: segmenter)
+    #expect(type("ji3ul4vu,3104", composer: &composer).marked == "我要寫104")
+    let panel = composer.handle(.down)
+    #expect(panel.candidates.first == "辦")
+    let index = panel.candidates.firstIndex(of: "伴")
+    #expect(index != nil, "第一頁沒有伴：\(panel.candidates)")
+    guard let index else { return }
+    #expect(composer.handle(.character(Character("\(index + 1)"))).marked == "我要寫伴")
+    // 後面接著打，選好的字不會變。
+    #expect(type("g.4ru8 ru8 ru.3", composer: &composer).marked == "我要寫伴受家家酒")
+}

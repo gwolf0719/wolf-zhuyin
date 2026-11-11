@@ -326,6 +326,13 @@ public struct Segmenter: Sendable {
             let readings = forcedPieces.compactMap(\.reading)
             let reading = readings.count == forcedPieces.count ? readings.joined(separator: "-") : nil
             result.append(Candidate(text: forced, start: start, reading: reading))
+            // 整段是一個字或一個詞時，同音的也一起列：104 被當成數字，想打的是「伴」不是「辦」，
+            // 不必先切成中文再開一次選字窗（使用者 2026-11-11：伴獸家家酒）。
+            if forcedPieces.count == 1, let reading {
+                for entry in entries(for: reading) where entry.text != forced {
+                    result.append(Candidate(text: entry.text, start: start, reading: reading))
+                }
+            }
         }
         if let symbols = Dachen.symbolsByKey(span) {
             result.append(Candidate(text: symbols, start: start, reading: nil))
