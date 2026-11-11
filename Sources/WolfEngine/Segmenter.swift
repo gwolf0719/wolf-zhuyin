@@ -118,6 +118,11 @@ public struct Segmenter: Sendable {
         "(": "（", ")": "）", "[": "「", "]": "」", "{": "『", "}": "』", "<": "，", ">": "。", "~": "～",
     ]
 
+    /// 全形標點 → 它的按鍵（，。各有兩個鍵，取不用按 Shift 的）。
+    static let punctuationKeys: [Character: Character] = Dictionary(
+        uniqueKeysWithValues: fullWidthPunctuation.filter { $0.key != "<" && $0.key != ">" }.map { ($0.value, $0.key) }
+    )
+
     private static let closingBrackets: [Character: Character] = [")": "(", "]": "[", "}": "{"]
 
     /// 路徑上的一小段：一個中文詞、一個英文字、一個標點或一個原樣輸出的按鍵。
@@ -298,8 +303,9 @@ public struct Segmenter: Sendable {
         guard let end = all.lastIndex(where: { $0.keys.upperBound == cursor }) else { return [] }
         var start = cursor
         // 之前手動切成英文的（私用區字元）也算，讓它可以再切回中文。
+        // 選成全形的標點（『）也算，推回它的按鍵，讓它可以再改成半形。
         func typedKey(_ index: Int) -> Character? {
-            let key = Self.decodedLiteral(keys[index]) ?? keys[index]
+            let key = Self.decodedLiteral(keys[index]) ?? Self.punctuationKeys[keys[index]] ?? keys[index]
             // 空白只有在最後面時算進來（一聲）：up␠ 切成英文後還能切回「因」。
             return key.isASCII && (key != " " || index == cursor - 1) ? key : nil
         }
@@ -308,7 +314,7 @@ public struct Segmenter: Sendable {
             start = piece.keys.lowerBound
         }
         guard start < cursor else { return [] }
-        let span = keys[start..<cursor].map { Self.decodedLiteral($0) ?? $0 }[...]
+        let span = keys[start..<cursor].map { Self.decodedLiteral($0) ?? Self.punctuationKeys[$0] ?? $0 }[...]
         var result: [Candidate] = []
         var chinese = self
         chinese.englishEnabled = false
@@ -329,6 +335,15 @@ public struct Segmenter: Sendable {
         let shown = all.filter { $0.keys.lowerBound >= start && $0.keys.upperBound <= cursor }.map(\.text).joined()
         if shown != typed, !result.contains(where: { $0.text == typed }) {
             result.append(Candidate(text: typed, start: start, reading: nil, inserted: String(typed.map(Self.literal))))
+        }
+        // 反過來：整段都是標點、畫面上是半形（手動改過，或在英文語境）時，可以改成全形。
+        // 只看結尾那幾個標點（hello[ 只改 [）。
+        let marks = span.reversed().prefix { Self.fullWidthPunctuation[$0] != nil }.reversed()
+        let fullWidth = String(marks.compactMap { Self.fullWidthPunctuation[$0] })
+        let marksStart = cursor - marks.count
+        let marksShown = all.filter { $0.keys.lowerBound >= marksStart && $0.keys.upperBound <= cursor }.map(\.text).joined()
+        if !marks.isEmpty, marksShown != fullWidth, !result.contains(where: { $0.text == fullWidth }) {
+            result.append(Candidate(text: fullWidth, start: marksStart, reading: nil))
         }
         return result
     }

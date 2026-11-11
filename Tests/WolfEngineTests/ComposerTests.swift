@@ -702,6 +702,24 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     #expect(composer.handle(.enter).commit == "我[]")
 }
 
+/// 標點改成半形之後還能改回全形，再改成半形也行（使用者 2026-11-11：『 變成 { 後切不回來）。
+@Test func punctuationCanBeSwitchedBackAndForth() {
+    var composer = Composer(segmenter: segmenter)
+    #expect(type("ji3{", composer: &composer).marked == "我『")
+    for expected in ["我{", "我『", "我{", "我『"] {
+        let target = String(expected.last!)
+        let panel = composer.handle(.down)
+        let index = panel.candidates.firstIndex(of: target)
+        #expect(index != nil, "選字窗沒有 \(target)：\(panel.candidates)")
+        guard let index else { return }
+        #expect(composer.handle(.character(Character("\(index + 1)"))).marked == expected)
+    }
+    // 英文語境裡半形的括號也能改成全形。
+    composer = Composer(segmenter: segmenter)
+    #expect(type("hello[", composer: &composer).marked == "hello[")
+    #expect(composer.handle(.down).candidates.contains("「"))
+}
+
 /// 外部來源（本機模型）的預測：前文相同才採用，排在自己的預測前面；前文一變就失效。
 @Test func externalPredictionsAreMergedForMatchingContext() {
     var composer = Composer(segmenter: segmenter)
