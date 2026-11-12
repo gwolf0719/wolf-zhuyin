@@ -954,3 +954,40 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     #expect(panel.candidates.contains("新"))
 
 }
+
+/// 使用者回報（2026-11-12）：「讓 codex 幫你」變成「codex1； 你」。
+/// 他常在句首打「你」，句首的加分被空白和「1；」後面的位置拿去用，贏過打得正確的 1;␠（ㄅㄤ）。
+@Test func sentenceStartHabitDoesNotBreakCorrectSyllables() {
+    var learning = segmenter
+    let history = UserHistory()
+    for _ in 0..<16 { history.record(["你"]) }
+    learning.history = history
+    var composer = Composer(segmenter: learning)
+    #expect(type("su3u.3b;4 codex 1; su3", composer: &composer).marked == "你有讓 codex 幫你")
+    // 真正的句首（中文後面的標點之後）照樣用得到紀錄。
+    #expect(history.count(after: UserHistory.sentenceStart, next: "你") == 16)
+}
+
+/// 注音符號不是詞：不記進用詞紀錄，舊紀錄裡的載入時丟掉。
+@Test func historyIgnoresBopomofoSymbols() throws {
+    let history = UserHistory()
+    history.record(["ㄍ", "剛", "我"])
+    #expect(history.count(after: "ㄍ", next: "剛") == 0)
+    #expect(history.all.keys.allSatisfy { !UserHistory.hasBopomofo($0) })
+
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("wolf-history-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: url) }
+    try JSONEncoder().encode(["ㄍ": ["剛": 2], "我": ["ㄧˇ": 3, "們": 2]]).write(to: url)
+    let loaded = UserHistory(fileURL: url)
+    #expect(loaded.all == ["我": ["們": 2]])
+}
+
+/// 使用者回報（2026-11-12）：「是剛剛」的 e; 按反成 ;e，出來是「是；ㄍ剛」。
+/// 詞庫收了單獨的注音符號（e␠ → ㄍ），但那不算打對；習慣顛倒順序的人要能被修正。
+@Test func loneBopomofoSymbolCountsAsUnrecognized() {
+    var learning = segmenter
+    learning.typos = UserTypos(corrections: ["s3u": ["su3": 3], "l3c": ["cl3": 3]])
+    #expect(learning.typos?.habits.contains(.reordered) == true)
+    var composer = Composer(segmenter: learning)
+    #expect(type("g4;e e; ji3", composer: &composer).marked == "是剛剛我")
+}

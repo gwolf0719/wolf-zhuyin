@@ -595,7 +595,9 @@ public struct Segmenter: Sendable {
         strict.weights.typoTolerance = false
         let path = strict.bestPath(keys, unexplained: [])
         // 沒認出來的：落單的字母鍵，以及緊接在字母後面、落單的聲調數字（us3 的 3：英文字後面不會直接接 3）。
+        // 轉出來是單獨的注音符號（e␠ → ㄍ）也算：詞庫收了這些符號，但幾乎都是打錯（;e␠ 是 e;␠ 按反了）。
         let unexplained = Set(path.filter { edge in
+            if edge.reading != nil, UserHistory.hasBopomofo(edge.text) { return true }
             guard edge.isRawKey else { return false }
             let key = keys[edge.start]
             return key.isASCIILetter || ("3467".contains(key) && edge.start > 0 && keys[edge.start - 1].isASCIILetter)
@@ -663,7 +665,12 @@ public struct Segmenter: Sendable {
                     if edge.language == .chinese, edge.punctuation == nil, let first = edge.text.first {
                         score += contextScore(state.last, first)
                         // 前一個是中文字或句子開頭時，查使用者自己打過幾次這個搭配。
-                        if let history, edge.reading != nil, !state.last.isASCII || state.last == CharacterContext.sentenceStart {
+                        // 句首的紀錄只用在真正的句首：整段的開頭，或中文後面的標點之後。
+                        // 空白、或數字英文後面的標點之後不算，否則常在句首打的字（你、我）會拿到很高的加分，
+                        // 讓「codex 1；␠你」贏過打得正確的「codex 幫你」（1; ＝ㄅㄤ）。
+                        let isSentenceStart = state.last == CharacterContext.sentenceStart && (entry.edge == nil
+                            || (entry.edge?.punctuation != nil && entry.previous.map { !$0.last.isASCII } == true))
+                        if let history, edge.reading != nil, !state.last.isASCII || isSentenceStart {
                             // 前兩個字的紀錄比較準；前一個字的紀錄可能因為後續太多被擠掉。
                             var count = history.count(after: String(state.last), next: edge.text)
                             if !state.before.isASCII, !state.last.isASCII {

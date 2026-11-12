@@ -25,7 +25,16 @@ public final class UserHistory: @unchecked Sendable {
     /// - Parameter fileURL: 儲存位置（JSON）；nil 表示只放在記憶體（測試用）。
     public init(fileURL: URL? = nil) {
         file = JSONFile(url: fileURL)
-        following = file.load() ?? [:]
+        // 舊版曾把選字窗選進來的注音符號（ㄍ、ㄧˇ）記成詞，會害之後的選字偏向那些符號；載入時丟掉。
+        following = (file.load() ?? [:]).compactMapValues { followers in
+            let kept = followers.filter { !Self.hasBopomofo($0.key) }
+            return kept.isEmpty ? nil : kept
+        }.filter { !Self.hasBopomofo($0.key) }
+    }
+
+    /// 含注音符號或聲調符號的不是詞（打到一半、或從選字窗選了注音符號）。
+    static func hasBopomofo(_ text: String) -> Bool {
+        text.unicodeScalars.contains { (0x3105...0x312F).contains($0.value) || "ˊˇˋ˙".unicodeScalars.contains($0) }
     }
 
     /// 目前所有的用詞紀錄（評測工具用）。
@@ -67,7 +76,7 @@ public final class UserHistory: @unchecked Sendable {
     public func record(_ words: [String]) {
         // 攤平成單位：中文一字一個、英文一個字一個；每個單位記住它所屬的詞在哪裡結束。
         var units: [(text: String, isChinese: Bool, wordEnd: Int)] = []
-        for word in words {
+        for word in words where !Self.hasBopomofo(word) {
             if word.allSatisfy(\.isASCII) {
                 units.append((word, false, units.count + 1))
             } else {
