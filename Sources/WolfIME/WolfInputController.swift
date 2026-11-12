@@ -132,7 +132,7 @@ final class WolfInputController: IMKInputController {
 
         let key = Self.key(for: event)
         if key == .backspace, reopenCommitted(in: client) { return true }
-        let result = composer.handle(key)
+        let result = wrapSelection(for: key, in: client) ?? composer.handle(key)
         // 只記有沒有處理，不記按了什麼鍵。
         debugLog("handle keyDown handled=\(result.handled) commit=\(result.commit != nil)")
         if let text = result.commit {
@@ -165,6 +165,16 @@ final class WolfInputController: IMKInputController {
         lastCursorRect = Self.cursorRect(in: client, at: cursorLocation)
         requestModelPrediction()
         return result.handled
+    }
+
+    /// 選了一段文字後按符號鍵：列出成對的標點來包住它。讀不到選取內容的 app（終端機等）照常開符號表。
+    private func wrapSelection(for key: Composer.Key, in client: IMKTextInput) -> Composer.Result? {
+        guard key == .character(Composer.symbolKey), composerIsIdle else { return nil }
+        let selection = client.selectedRange()
+        guard selection.location != NSNotFound, selection.length > 0, selection.length <= Composer.wrapLimit * 2,
+              let selected = client.attributedSubstring(from: selection)?.string, selected.utf16.count == selection.length
+        else { return nil }
+        return composer.wrap(selected)
     }
 
     /// 剛送出就按退格：把那一段拉回組字區重改。只有確認得了「游標前面真的還是剛送出的文字」的 app 才做；

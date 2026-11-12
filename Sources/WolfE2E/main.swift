@@ -11,8 +11,8 @@ guard arguments.count == 3 else {
     exit(2)
 }
 /// 按鍵序列：一般字元照打，特殊鍵寫成 {enter} {down} {up} {left} {right} {esc} {delete} {tab}；
-/// {wait} 是停兩秒不按鍵（等本機模型的預測回來）。
-enum Stroke { case character(Character), special(Int), wait }
+/// {wait} 是停兩秒不按鍵（等本機模型的預測回來）；{selectall} 是選取文字框裡的全部內容。
+enum Stroke { case character(Character), special(Int), wait, selectAll }
 let specialKeys = ["enter": kVK_Return, "down": kVK_DownArrow, "up": kVK_UpArrow, "left": kVK_LeftArrow,
                    "right": kVK_RightArrow, "esc": kVK_Escape, "delete": kVK_Delete, "tab": kVK_Tab]
 var keys: [Stroke] = []
@@ -21,6 +21,9 @@ while let first = rest.first {
     if rest.hasPrefix("{wait}") {
         keys.append(.wait)
         rest = rest.dropFirst(6)
+    } else if rest.hasPrefix("{selectall}") {
+        keys.append(.selectAll)
+        rest = rest.dropFirst(11)
     } else if first == "{", let close = rest.firstIndex(of: "}"), let code = specialKeys[String(rest[rest.index(after: rest.startIndex)..<close])] {
         keys.append(.special(code))
         rest = rest[rest.index(after: close)...]
@@ -141,6 +144,7 @@ DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 switch key {
                 case .character(let character): send(character: character)
                 case .special(let code): send(keyCode: UInt16(code))
+                case .selectAll: textView.selectAll(nil)
                 case .wait: break
                 }
             }

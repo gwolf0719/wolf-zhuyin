@@ -55,6 +55,8 @@ public struct Composer: Sendable {
         var items: [Item]
         var highlighted = 0
         var isSymbols: Bool
+        /// 把選取的文字包進成對標點：選了就直接送出，取消就把原文原樣送回去。
+        var isWrap = false
     }
 
     private struct Item: Sendable {
@@ -86,6 +88,14 @@ public struct Composer: Sendable {
         "(", ")", "[", "]", "{", "}", "<", ">", "/",
         "_", "|", "@", "#", "$", "%", "&", "*", "~",
     ]
+
+    /// 包住選取文字用的成對標點，第一頁是最常用的。
+    static let pairs: [(open: String, close: String)] = [
+        ("「", "」"), ("『", "』"), ("（", "）"), ("《", "》"), ("【", "】"), ("〈", "〉"), ("“", "”"), ("[", "]"), ("(", ")"),
+        ("{", "}"), ("\"", "\""), ("'", "'"), ("`", "`"), ("<", ">"), ("**", "**"),
+    ]
+    /// 選取的文字超過這個長度就不包（多半是整段內容，放進組字區不合適）。
+    public static let wrapLimit = 100
 
     private let segmenter: Segmenter
     private var keys: [Character] = [] {
@@ -203,6 +213,33 @@ public struct Composer: Sendable {
     /// 游標可能已經不在剛送出的文字後面（點了別處、換了視窗）：不能再拉回來。
     public mutating func forgetCommit() {
         lastCommit = nil
+    }
+
+    /// 在 app 裡選了一段文字後按符號鍵：列出成對的標點，選一個就把那段文字包起來。
+    /// 選取的文字先放進組字區（app 會用組字區取代選取範圍），選定或取消時再送出。
+    /// 只在沒有組字時有效；有換行或太長的不包，回傳 nil 讓按鍵照常處理。
+    public mutating func wrap(_ selected: String) -> Result? {
+        guard keys.isEmpty, panel == nil, !selected.isEmpty, selected.count <= Self.wrapLimit,
+              !selected.contains(where: \.isNewline) else { return nil }
+        committedText = nil
+        lastCommit = nil
+        fix = nil
+        // ASCII 要包成照打的字元，否則會被當成按鍵重新轉換。
+        func fixed(_ text: String) -> String { String(text.map { $0.isASCII ? Segmenter.literal($0) : $0 }) }
+        let preview = selected.count <= 6 ? selected : String(selected.prefix(3)) + "…" + String(selected.suffix(2))
+        keys = Array(fixed(selected))
+        cursor = keys.count
+        panel = Panel(items: Self.pairs.map { pair in
+            Item(text: pair.open + preview + pair.close, start: 0, inserted: fixed(pair.open + selected + pair.close))
+        }, isSymbols: false, isWrap: true)
+        return state()
+    }
+
+    /// 結束「包住選取文字」：把組字區現在的內容送出。這段文字不是使用者剛打的，不記進用詞紀錄。
+    private mutating func finishWrap() -> Result {
+        panel = nil
+        reopenedKeys = String(keys)
+        return commit(text(of: keys))
     }
 
     /// 不再提示送出後的預測（使用者點了別的地方、或停太久沒動作）。
@@ -470,12 +507,22 @@ public struct Composer: Sendable {
             current.highlighted = max(pageStart - Self.pageSize, 0)
         case .escape, .backspace:
             panel = nil
-            return state()
+            return current.isWrap ? finishWrap() : state()
         case .character, .other:
             panel = nil
-            return nil
+            guard current.isWrap else { return nil }
+            // 沒選就接著打字：原文原樣送回去，這個鍵照常處理。
+            let restored = finishWrap()
+            var result = handle(key)
+            result.commit = (restored.commit ?? "") + (result.commit ?? "")
+            return result
         }
 
+        if let chosen, current.isWrap {
+            keys = Array(chosen.inserted ?? chosen.text)
+            cursor = keys.count
+            return finishWrap()
+        }
         if let chosen {
             // 選定的文字直接寫進緩衝，取代原本那幾個按鍵；之後不再被重新轉換。
             learn(chosen, after: String(keys[..<chosen.start]))

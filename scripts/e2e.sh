@@ -36,6 +36,9 @@ run 'su3cl3{enter}{delete}{delete}{enter}' '你'
 run 'ji3y94ru8 {enter}{delete}{left}{down}2{enter}' '我再家'
 # ↑ 直接跳到沒把握的字並開選字窗。
 run 'ji3y94ru8 {up}2{enter}' '我再家'
+# 選取文字後按 \：列出成對的標點，選一個把文字包起來；Esc 取消時原文不變。
+run 'su3cl3{enter}{selectall}\1' '「你好」'
+run 'su3cl3{enter}{selectall}\{esc}' '你好'
 run 'hello, world{enter}' 'hello, world'
 run 'su3cl' '你ㄏㄠ'
 run 'y94{down}1' '在'

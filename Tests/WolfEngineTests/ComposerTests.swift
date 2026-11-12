@@ -991,3 +991,45 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     var composer = Composer(segmenter: learning)
     #expect(type("g4;e e; ji3", composer: &composer).marked == "是剛剛我")
 }
+
+/// 使用者提案（2026-11-12）：選一段文字後按 \ 跳出成對的標點，選一個就包起來。
+@Test func selectedTextCanBeWrappedInPairedPunctuation() {
+    var composer = Composer(segmenter: segmenter)
+    // 選取的文字先進組字區（中英混合都照原樣，不重新轉換），候選是各種成對標點。
+    let opened = composer.wrap("狼注音 v1")!
+    #expect(opened.marked == "狼注音 v1" && opened.commit == nil)
+    #expect(opened.candidates.prefix(3) == ["「狼注音 v1」", "『狼注音 v1』", "（狼注音 v1）"])
+    // 按數字鍵選定：直接送出，不留在組字區。
+    let chosen = composer.handle(.character("2"))
+    #expect(chosen.commit == "『狼注音 v1』" && chosen.marked.isEmpty && chosen.candidates.isEmpty)
+
+    // 取消：原文原樣送回去（app 已經用組字區取代了選取範圍，不能就這樣丟掉）。
+    _ = composer.wrap("su3")
+    #expect(composer.handle(.escape).commit == "su3")
+    // 沒選就接著打字：原文送回去，後面照常組字。
+    _ = composer.wrap("你好")
+    let typed = composer.handle(.character("j"))
+    #expect(typed.commit == "你好" && typed.marked == "ㄨ")
+    _ = composer.handle(.escape)
+    // 第二頁有程式用的半形成對符號。
+    _ = composer.wrap("x")
+    #expect(composer.handle(.right).candidates.first == "{x}")
+    #expect(composer.handle(.enter).commit == "{x}")
+
+    // 組字中、有換行、太長的都不包，讓按鍵照常處理。
+    #expect(composer.wrap("a\nb") == nil)
+    #expect(composer.wrap(String(repeating: "字", count: Composer.wrapLimit + 1)) == nil)
+    _ = composer.handle(.character("j"))
+    #expect(composer.wrap("你好") == nil)
+}
+
+/// 包起來的文字不是使用者剛打的，不記進用詞紀錄。
+@Test func wrappedSelectionIsNotLearned() {
+    var learning = segmenter
+    let history = UserHistory()
+    learning.history = history
+    var composer = Composer(segmenter: learning)
+    _ = composer.wrap("別人的文字")
+    #expect(composer.handle(.character("1")).commit == "「別人的文字」")
+    #expect(history.contextCount == 0)
+}
