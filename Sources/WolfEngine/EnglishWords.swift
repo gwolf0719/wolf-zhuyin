@@ -15,7 +15,8 @@ public struct EnglishWords: Sendable {
         common = Set(Self.commonWords.split(whereSeparator: \.isWhitespace).map(String.init))
         let content = (try? String(contentsOf: dictionaryURL, encoding: .utf8)) ?? ""
         // 系統詞表收了大量冷僻的一、二字母「單字」，只會製造誤判，所以只取 3 個字母以上。
-        dictionary = Set(content.split(separator: "\n").lazy.filter { $0.count >= 3 }.map { $0.lowercased() })
+        // 例外：ai 太常用，要認得（不然 aiy4 會被當成打錯的注音修成「末」），但放在低分層，不搶單獨打的「摸」（ai␠）。
+        dictionary = Set(content.split(separator: "\n").lazy.filter { $0.count >= 3 }.map { $0.lowercased() }).union(["ai"])
         sorted = common.sorted()
     }
 

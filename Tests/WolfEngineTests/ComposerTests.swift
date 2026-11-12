@@ -768,7 +768,7 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     #expect(composer.handle(.down).candidates.contains("「"))
 }
 
-/// 外部來源（本機模型）的預測：前文相同才採用，排在自己的預測前面；前文一變就失效。
+/// 外部來源（本機模型）的預測：前文相同才採用，接在自己的預測後面；前文一變就失效。
 @Test func externalPredictionsAreMergedForMatchingContext() {
     var composer = Composer(segmenter: segmenter)
     _ = type("1j4cl3", composer: &composer)
@@ -778,11 +778,11 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     // 太長或空的丟掉。
     #expect(composer.offer(predictions: ["", String(repeating: "長", count: 13)], for: "不好") == nil)
     let offered = composer.offer(predictions: ["說", "意思"], for: "不好")
-    #expect(offered?.prediction == "說")
+    #expect(offered?.prediction == "意思" && offered?.predictions.last == "說")
     let panel = composer.handle(.tab)
-    #expect(Array(panel.candidates.prefix(2)) == ["說", "意思"])
-    #expect(panel.candidates.filter { $0 == "意思" }.count == 1)
-    #expect(composer.handle(.tab).marked == "不好說")
+    #expect(panel.candidates.first == "意思" && panel.candidates.filter { $0 == "意思" }.count == 1)
+    let index = panel.candidates.firstIndex(of: "說")!
+    #expect(composer.handle(.character(Character("\(index + 1)"))).marked == "不好說")
     // 前文變了：舊的外部預測不再出現。
     #expect(composer.predictionContext == "不好說")
     #expect(!(composer.handle(.tab).candidates.contains("意思") && composer.predictionContext == "不好"))
@@ -1032,4 +1032,43 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     _ = composer.wrap("別人的文字")
     #expect(composer.handle(.character("1")).commit == "「別人的文字」")
     #expect(history.contextCount == 0)
+}
+
+/// 使用者回報（2026-11-12）：「ai自動推薦」變成「末動推薦」。ai 不在英文詞表，被當成沒認出來的鍵拿去修正。
+@Test func aiIsAnEnglishWord() {
+    var learning = segmenter
+    // 有「多按一鍵」習慣的人：aiy4 會被修成 ai4（末）。
+    learning.typos = UserTypos(corrections: ["su33": ["su3": 3], "cl33": ["cl3": 3]])
+    var composer = Composer(segmenter: learning)
+    #expect(type("aiy42j/4", composer: &composer).marked.hasSuffix("自動"))
+    _ = composer.handle(.escape)
+    // 「摸」不受影響：單獨打、成詞都還是中文（ai 只放在低分層）。
+    #expect(type("ai ", composer: &composer).marked == "摸")
+    _ = composer.handle(.escape)
+    #expect(type("zj3ai ", composer: &composer).marked == "撫摸")
+}
+
+/// 提示要列出全部的預測；模型的結果陸續回來時只往後加，已經列出來的不換位置。
+@Test func allPredictionsAreListedAndExternalOnesAppend() {
+    var learning = segmenter
+    learning.predictsOnlyWhenConfident = true
+    let history = UserHistory()
+    for _ in 0..<4 { history.record(["我", "想", "吃飯"]) }
+    learning.history = history
+    var composer = Composer(segmenter: learning)
+    let local = type("ji3vu;3", composer: &composer)
+    _ = local
+    let context = composer.predictionContext!
+    let before = composer.offer(predictions: [], for: context)
+    #expect(before == nil)
+    let first = composer.offer(predictions: ["睡覺"], for: context)!
+    #expect(first.predictions == ["吃飯", "睡覺"] && first.prediction == "吃飯")
+    let second = composer.offer(predictions: ["睡覺", "回家"], for: context)!
+    #expect(second.predictions == ["吃飯", "睡覺", "回家"])
+}
+
+@Test func modelOutputKeepsOnlyUsableContinuations() {
+    let known: (Character) -> Bool = { $0 != "会" }
+    let output = "接續：好，適合出去走走\n開会\n今天天氣很不錯\n（1）這是編號\n很好\n好"
+    #expect(ModelOutput.predictions(from: output, after: "今天天氣很", limit: 5, isKnown: known) == ["好", "不錯", "很好"])
 }

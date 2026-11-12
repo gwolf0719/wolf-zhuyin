@@ -126,5 +126,7 @@ private func type(_ keys: String, _ composer: inout Composer) -> Composer.Result
     #expect(ModelOutput.predictions(from: "到。\n到。\n到。", after: "我今天會晚一點") == ["到"])
     #expect(ModelOutput.predictions(from: "處理\n了\n\n句子：我今天要\n去\n旅行", after: "這個bug我已經") == ["處理", "了"])
     #expect(ModelOutput.predictions(from: "謝謝你的關心\n謝謝你的支持", after: "謝謝你的") == ["關心", "支持"])
-    #expect(ModelOutput.predictions(from: "1. \n **「開會」**\n很方便，可以幫助我更快完成寫作的工作內容", after: "x").isEmpty)
+    #expect(ModelOutput.predictions(from: "1. \n **「開會」**\n很方便，可以幫助我更快完成寫作的工作內容", after: "x") == ["很方便"])
+    // 標點後面的不要：只補到第一個標點之前。
+    #expect(ModelOutput.predictions(from: "好，適合出去走走", after: "今天天氣很") == ["好"])
 }

@@ -34,6 +34,8 @@ public struct Composer: Sendable {
         public var highlighted: Int
         /// 最可能的後續內容，當作提示顯示；按 Tab 會列出所有預測，再用數字鍵或 Tab 選。nil 表示沒有預測。
         public var prediction: String?
+        /// 所有的預測，最可能的在前（第一個就是 `prediction`）。提示直接全部列出來，使用者看得到再決定按 Tab 選哪個。
+        public var predictions: [String] = []
 
         public init(
             handled: Bool, commit: String? = nil, marked: String = "", cursor: Int? = nil,
@@ -150,21 +152,23 @@ public struct Composer: Sendable {
             result.candidates = panel.items[pageStart..<min(pageStart + Self.pageSize, panel.items.count)].map(\.text)
             result.highlighted = panel.highlighted - pageStart
         } else {
-            result.prediction = currentPredictions.first
+            result.predictions = currentPredictions
+            result.prediction = result.predictions.first
         }
         return result
     }
 
     /// 游標在結尾、選字窗沒開時才預測；組字區是空的時候，看剛送出的內容。
-    /// 外部來源（本機模型）對同一段前文的預測排最前面，再來是自己的用詞紀錄與詞庫。
+    /// 自己的用詞紀錄排最前面（有把握的才會出現，比模型準），外部來源（本機模型）對同一段前文的預測接在後面。
+    /// 模型的結果是陸續回來的：只往後面加，已經列出來的不會換位置，使用者正要按的那個數字不會突然變成別的。
     private var currentPredictions: [String] {
         guard predictionsEnabled, panel == nil, cursor == keys.count else { return [] }
         let local = keys.isEmpty
             ? committedText.map { segmenter.predictions(following: $0) } ?? []
             : segmenter.predictions(String(keys), afterChinese: afterChinese)
         guard let external, external.context == predictionContext else { return local }
-        var merged = external.predictions
-        for prediction in local where !merged.contains(prediction) { merged.append(prediction) }
+        var merged = local
+        for prediction in external.predictions where !merged.contains(prediction) { merged.append(prediction) }
         return Array(merged.prefix(Self.pageSize))
     }
 
@@ -349,7 +353,8 @@ public struct Composer: Sendable {
         if let last = text.last { afterChinese = !last.isASCII }
         committedText = text
         var result = Result(handled: handled, commit: text)
-        result.prediction = currentPredictions.first
+        result.predictions = currentPredictions
+        result.prediction = result.predictions.first
         return result
     }
 

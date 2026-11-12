@@ -17,6 +17,8 @@ final class WolfInputController: IMKInputController {
     /// 最近送出的文字，給模型當前文。換視窗、點滑鼠就清掉，因為游標可能已經不在原處。
     private var recentCommitted = ""
     private var modelRequest: DispatchWorkItem?
+    /// 正在算的模型預測；前文一變就取消，不讓過期的工作佔著模型。
+    private var modelTask: Task<Void, Never>?
     private var lastCursorRect = NSRect.zero
     /// 停止打字這麼久才問模型，避免每打一鍵就問一次。
     private static let modelDelay: TimeInterval = 0.25
@@ -56,14 +58,17 @@ final class WolfInputController: IMKInputController {
     private func requestModelPrediction() {
         modelRequest?.cancel()
         modelRequest = nil
+        modelTask?.cancel()
+        modelTask = nil
         guard usesModelPredictions, let context = composer.predictionContext, !context.isEmpty else { return }
         // 組字中：前文是「最近送出的＋組字區」；剛送出：最近送出的結尾就是它。
         let text = recentCommitted.hasSuffix(context) ? recentCommitted : recentCommitted + context
         let request = DispatchWorkItem { [weak self] in
-            ModelPredictor.predict(after: text) { predictions in
+            let lexicon = sharedLexicon
+            self?.modelTask = ModelPredictor.predict(after: text, isKnown: { lexicon.contains($0) }) { predictions in
                 guard let self, let result = self.composer.offer(predictions: predictions, for: context),
-                      result.candidates.isEmpty, let prediction = result.prediction else { return }
-                CandidatePanel.shared.show(prediction: prediction, near: self.lastCursorRect)
+                      result.candidates.isEmpty, !result.predictions.isEmpty else { return }
+                CandidatePanel.shared.show(predictions: result.predictions, near: self.lastCursorRect)
                 if result.marked.isEmpty { self.schedulePredictionExpiry() }
             }
         }
@@ -151,8 +156,8 @@ final class WolfInputController: IMKInputController {
         predictionExpiry?.cancel()
         predictionExpiry = nil
         composerIsIdle = result.marked.isEmpty
-        if result.candidates.isEmpty, let prediction = result.prediction {
-            CandidatePanel.shared.show(prediction: prediction, near: Self.cursorRect(in: client, at: cursorLocation))
+        if result.candidates.isEmpty, !result.predictions.isEmpty {
+            CandidatePanel.shared.show(predictions: result.predictions, near: Self.cursorRect(in: client, at: cursorLocation))
             if result.marked.isEmpty { schedulePredictionExpiry() }
         } else if result.candidates.isEmpty {
             CandidatePanel.shared.hide()

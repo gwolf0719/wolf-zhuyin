@@ -11,6 +11,7 @@ import WolfEngine
 //   WolfZhuyin --learned <資料夾>  用指定資料夾裡的紀錄開「學習紀錄」視窗（驗收畫面用；
 //                           真正的紀錄只能從輸入法選單開，因為要和常駐的輸入法共用記憶體裡的那一份）
 //   WolfZhuyin --version    印出版本
+//   WolfZhuyin --predict <前文>  用本機模型預測接下來的內容，印出每個結果回來的時間（驗證與調提示詞用）
 //   WolfZhuyin --status     印出系統是否認得、是否已啟用
 // 不帶參數時由系統啟動，作為輸入法伺服器常駐。
 
@@ -81,6 +82,27 @@ case "--check-update":
 case "--version":
     print(Updater.currentVersion)
     exit(0)
+
+case "--predict":
+    guard let text = CommandLine.arguments.dropFirst(2).first else {
+        print("用法：WolfZhuyin --predict <前文>")
+        exit(2)
+    }
+    guard ModelPredictor.isAvailable else {
+        print("本機模型不可用（需要 macOS 26 並開啟 Apple Intelligence）")
+        exit(1)
+    }
+    let lexicon = try! Lexicon(contentsOf: Bundle.main.resourceURL!.appendingPathComponent("data.txt"))
+    let started = Date()
+    let task = ModelPredictor.predict(after: text, isKnown: { lexicon.contains($0) }) { predictions in
+        print(String(format: "%.2f 秒", Date().timeIntervalSince(started)), predictions.joined(separator: "｜"))
+    }
+    Task {
+        await task?.value
+        print(String(format: "%.2f 秒 結束", Date().timeIntervalSince(started)))
+        exit(0)
+    }
+    RunLoop.main.run()
 
 case "--status":
     guard let source = installedSource() else {

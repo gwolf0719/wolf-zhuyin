@@ -47,9 +47,14 @@ final class CandidatePanel: NSPanel {
         show(rows, near: cursor)
     }
 
-    /// 預測提示：一列「⇥ 後續內容」，不反白，表示按 Tab 才會採用。
-    func show(prediction: String, near cursor: NSRect) {
-        show([CandidateRow(label: "⇥", text: prediction, isHighlighted: false, isHint: true)], near: cursor)
+    /// 預測提示：全部列出來，不反白，表示按 Tab 才會採用。標籤就是要按的鍵：
+    /// 第一個「⇥⇥」（Tab 兩下），其餘「⇥2」「⇥3」（Tab 再按數字）。
+    static let maximumHints = 5
+    func show(predictions: [String], near cursor: NSRect) {
+        let rows = predictions.prefix(Self.maximumHints).enumerated().map { index, prediction in
+            CandidateRow(label: index == 0 ? "⇥⇥" : "⇥\(index + 1)", text: prediction, isHighlighted: false, isHint: true)
+        }
+        show(rows, near: cursor)
     }
 
     private func show(_ rows: [CandidateRow], near cursor: NSRect) {

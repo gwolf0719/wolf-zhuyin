@@ -26,6 +26,9 @@ public struct Lexicon: Sendable {
     /// 詞 → 最常見的讀音（評測時把文字轉回按鍵用）。
     private(set) var readings: [String: (reading: String, score: Double)] = [:]
 
+    /// 詞庫有沒有收這個字。簡體字、日文漢字不在裡面，用來濾掉本機模型偶爾冒出來的簡體。
+    public func contains(_ character: Character) -> Bool { readings[String(character)] != nil }
+
     public static let extraCharactersFile = "extra-characters.txt"
 
     public init(contentsOf url: URL) throws {
