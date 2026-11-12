@@ -28,4 +28,20 @@ public enum ModelOutput {
         }
         return result
     }
+
+    /// 品質篩選：同一段前文問模型好幾次，只留「至少 `minimum` 次給出一模一樣接法」的，先達標的在前。
+    /// 模型沒把握時每次講的都不一樣，那些就不列。量測（Eval/dev.txt 切出 60 個前文，2026-11-12）：
+    /// 不篩選時列出 147 個、全對 13 個（9%）；問 2 次且兩次相同時列出 27 個、全對 8 個（30%）。
+    public static func agreed(
+        _ samples: [String], after text: String, minimum: Int = 2, limit: Int = 3, isKnown: (Character) -> Bool = { _ in true }
+    ) -> [String] {
+        var counts: [String: Int] = [:]
+        var result: [String] = []
+        for sample in samples {
+            guard let candidate = predictions(from: sample, after: text, limit: 1, isKnown: isKnown).first else { continue }
+            counts[candidate, default: 0] += 1
+            if counts[candidate] == minimum, result.count < limit { result.append(candidate) }
+        }
+        return result
+    }
 }

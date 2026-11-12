@@ -163,7 +163,7 @@ final class WolfInputController: IMKInputController {
             CandidatePanel.shared.hide()
         } else {
             CandidatePanel.shared.show(
-                candidates: result.candidates, highlighted: result.highlighted,
+                candidates: result.candidates, highlighted: result.highlighted, cyclesWithTab: result.cyclesWithTab,
                 near: Self.cursorRect(in: client, at: cursorLocation)
             )
         }

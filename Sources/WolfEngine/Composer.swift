@@ -36,6 +36,8 @@ public struct Composer: Sendable {
         public var prediction: String?
         /// 所有的預測，最可能的在前（第一個就是 `prediction`）。提示直接全部列出來，使用者看得到再決定按 Tab 選哪個。
         public var predictions: [String] = []
+        /// 選字窗列的是預測：反白的那個已經套用，按 Tab 換下一個；數字鍵不是用來選的（照常打字）。
+        public var cyclesWithTab = false
 
         public init(
             handled: Bool, commit: String? = nil, marked: String = "", cursor: Int? = nil,
@@ -59,6 +61,8 @@ public struct Composer: Sendable {
         var isSymbols: Bool
         /// 把選取的文字包進成對標點：選了就直接送出，取消就把原文原樣送回去。
         var isWrap = false
+        /// 預測：反白的那個已經寫進組字區，再按 Tab 換成下一個；按其他鍵就是接受，照常處理那個鍵。
+        var isCycle = false
     }
 
     private struct Item: Sendable {
@@ -151,6 +155,7 @@ public struct Composer: Sendable {
             let pageStart = panel.highlighted / Self.pageSize * Self.pageSize
             result.candidates = panel.items[pageStart..<min(pageStart + Self.pageSize, panel.items.count)].map(\.text)
             result.highlighted = panel.highlighted - pageStart
+            result.cyclesWithTab = panel.isCycle
         } else {
             result.predictions = currentPredictions
             result.prediction = result.predictions.first
@@ -404,7 +409,8 @@ public struct Composer: Sendable {
             observeRetyped(character)
             return autoCommit()
         case .tab:
-            // 有預測就列出來（再按一次 Tab 選第一個，或按數字鍵選）；沒有就當一般按鍵，送出後交還給 app。
+            // 有預測就直接套用第一個，並列出全部；再按 Tab 換成下一個（使用者 2026-11-12：Tab 加數字太麻煩）。
+            // 沒有預測就當一般按鍵，送出後交還給 app。
             committedText = lastCommitted
             let predictions = currentPredictions
             committedText = nil
@@ -416,7 +422,8 @@ public struct Composer: Sendable {
             let previous = keys.last ?? lastCommitted?.last
             panel = Panel(items: predictions.map { prediction in
                 Item(text: prediction, start: cursor, separator: isLatin(previous) && isLatin(prediction.first) ? " " : "")
-            }, isSymbols: false)
+            }, isSymbols: false, isCycle: true)
+            apply(panel!.items[0])
             return state()
         case .other:
             // 先送出組字內容，再把按鍵交還給 app。
@@ -486,9 +493,42 @@ public struct Composer: Sendable {
         }
     }
 
+    /// 把選定的項目寫進緩衝，取代從它的起點到游標的內容。
+    private mutating func apply(_ item: Item, reading syllables: [String] = []) {
+        let inserted = Array(item.separator + (item.inserted ?? item.text))
+        let newNotes: [String?] = item.separator.isEmpty && syllables.count == inserted.count
+            ? syllables : Array(repeating: nil, count: inserted.count)
+        notes.replaceSubrange(item.start..<cursor, with: newNotes)
+        keys.replaceSubrange(item.start..<cursor, with: inserted)
+        cursor = item.start + inserted.count
+    }
+
+    /// 預測已經套用時的按鍵：Tab／↓ 換下一個、↑ 換上一個、Esc／退格拿掉；其他鍵就是接受，回傳 nil 照常處理。
+    private mutating func handleInCycle(_ key: Key, _ current: Panel) -> Result? {
+        var current = current
+        switch key {
+        case .tab, .down: current.highlighted = (current.highlighted + 1) % current.items.count
+        case .up: current.highlighted = (current.highlighted + current.items.count - 1) % current.items.count
+        case .escape, .backspace:
+            let start = current.items[0].start
+            notes.removeSubrange(start..<cursor)
+            keys.removeSubrange(start..<cursor)
+            cursor = start
+            panel = nil
+            return state()
+        default:
+            panel = nil
+            return nil
+        }
+        apply(current.items[current.highlighted])
+        panel = current
+        return state()
+    }
+
     /// 選字窗開著時的按鍵處理。回傳 nil 表示關掉選字窗後照一般按鍵處理。
     private mutating func handleInPanel(_ key: Key) -> Result? {
         guard var current = panel else { return nil }
+        if current.isCycle { return handleInCycle(key, current) }
         let pageStart = current.highlighted / Self.pageSize * Self.pageSize
 
         var chosen: Item?
@@ -531,7 +571,6 @@ public struct Composer: Sendable {
         if let chosen {
             // 選定的文字直接寫進緩衝，取代原本那幾個按鍵；之後不再被重新轉換。
             learn(chosen, after: String(keys[..<chosen.start]))
-            let inserted = Array(chosen.separator + (chosen.inserted ?? chosen.text))
             // 從選字窗選了「可能是打錯」的候選：記成一次更正，累積成打錯習慣。
             let original = Array(keys[chosen.start..<cursor])
             if let reading = chosen.reading, !reading.contains("-"), original.allSatisfy(\.isASCII),
@@ -539,12 +578,7 @@ public struct Composer: Sendable {
                 segmenter.typos?.learn(mistyped: String(original), intended: canonical)
             }
             // 中文候選一個字對一個音節時，記下每個字的讀音。
-            let syllables = chosen.reading?.split(separator: "-").map(String.init) ?? []
-            let newNotes: [String?] = chosen.separator.isEmpty && syllables.count == inserted.count
-                ? syllables : Array(repeating: nil, count: inserted.count)
-            notes.replaceSubrange(chosen.start..<cursor, with: newNotes)
-            keys.replaceSubrange(chosen.start..<cursor, with: inserted)
-            cursor = chosen.start + inserted.count
+            apply(chosen, reading: chosen.reading?.split(separator: "-").map(String.init) ?? [])
             panel = nil
             return autoCommit()
         }

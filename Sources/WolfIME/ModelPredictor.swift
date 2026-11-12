@@ -9,13 +9,15 @@ import FoundationModels
 ///
 /// 做法（2026-11-12 量過）：叫模型「一次列三種」時它常只給一種、照抄範例、或把一句話拆成三行；
 /// 改成每次只要一種續寫、同時問幾次（一次取最可能的、其餘隨機取樣），十句測試句每句都能湊出 2–3 種合理的接法。
-/// 第一個結果約 0.5–1 秒回來，其餘陸續補上。
+/// 但多出來的接法大多是錯的（60 個前文：列出 147 個只有 13 個全對），所以改成問兩次、兩次一致才提示
+/// （列出 27 個、全對 8 個）。模型沒把握時寧可不提示。
 enum ModelPredictor {
     /// 交給模型的前文最多這麼多字：夠它看懂句子，又不會拖慢回應。
     static let contextLength = 40
-    static let maximumPredictions = 3
-    /// 同時問幾次。隨機取樣常重複，所以比要的數量多問一次。
-    private static let samples = 4
+    static let maximumPredictions = 1
+    /// 同時問兩次：一次取最可能的、一次隨機取樣，兩次一樣才採用。
+    /// 問更多次並不會更好：多出來的取樣只是讓更多錯的接法湊到兩票（見 docs/decisions.md 的量測表）。
+    private static let samples = 2
 
     static var isAvailable: Bool {
         #if canImport(FoundationModels)
@@ -41,17 +43,16 @@ enum ModelPredictor {
                     for index in 0..<samples {
                         group.addTask { await continuation(of: context, sample: index) }
                     }
+                    var outputs: [String] = []
                     var found: [String] = []
                     for await output in group {
                         guard let output, !Task.isCancelled else { continue }
-                        let merged = ModelOutput.predictions(
-                            from: (found + [output]).joined(separator: "\n"), after: context,
-                            limit: maximumPredictions, isKnown: isKnown
-                        )
-                        guard merged.count > found.count else { continue }
-                        found = merged
+                        outputs.append(output)
+                        // 至少兩次給出一樣的接法才列出來；模型沒把握時每次都不一樣，寧可不提示。
+                        let agreed = ModelOutput.agreed(outputs, after: context, limit: maximumPredictions, isKnown: isKnown)
+                        guard agreed.count > found.count else { continue }
+                        found = agreed
                         await update(found)
-                        if found.count == maximumPredictions { group.cancelAll() }
                     }
                 }
             }

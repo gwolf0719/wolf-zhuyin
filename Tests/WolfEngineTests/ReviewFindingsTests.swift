@@ -49,7 +49,6 @@ private func type(_ keys: String, _ composer: inout Composer) -> Composer.Result
         _ = composer.handle(.enter)
     }
     #expect(type("hello", &composer).prediction == "world")
-    _ = composer.handle(.tab)
     #expect(composer.handle(.tab).marked == "hello world")
     #expect(composer.handle(.enter).commit == "hello world")
 }

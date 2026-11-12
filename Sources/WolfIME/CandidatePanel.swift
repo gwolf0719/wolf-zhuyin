@@ -40,19 +40,19 @@ final class CandidatePanel: NSPanel {
     override var canBecomeKey: Bool { false }
 
     /// - Parameter cursor: 組字游標在螢幕上的位置（左下角原點）。
-    func show(candidates: [String], highlighted: Int, near cursor: NSRect) {
+    /// - Parameter cyclesWithTab: 列的是預測，反白的已經套用、按 Tab 換下一個；數字鍵不能選，所以不標數字。
+    func show(candidates: [String], highlighted: Int, cyclesWithTab: Bool = false, near cursor: NSRect) {
         let rows = candidates.enumerated().map { index, candidate in
-            CandidateRow(label: "\(index + 1)", text: candidate, isHighlighted: index == highlighted)
+            CandidateRow(label: cyclesWithTab ? "⇥" : "\(index + 1)", text: candidate, isHighlighted: index == highlighted)
         }
         show(rows, near: cursor)
     }
 
-    /// 預測提示：全部列出來，不反白，表示按 Tab 才會採用。標籤就是要按的鍵：
-    /// 第一個「⇥⇥」（Tab 兩下），其餘「⇥2」「⇥3」（Tab 再按數字）。
+    /// 預測提示：全部列出來，不反白，表示按 Tab 才會採用。標籤就是要按幾下 Tab：⇥、⇥⇥、⇥⇥⇥。
     static let maximumHints = 5
     func show(predictions: [String], near cursor: NSRect) {
         let rows = predictions.prefix(Self.maximumHints).enumerated().map { index, prediction in
-            CandidateRow(label: index == 0 ? "⇥⇥" : "⇥\(index + 1)", text: prediction, isHighlighted: false, isHint: true)
+            CandidateRow(label: String(repeating: "⇥", count: index + 1), text: prediction, isHighlighted: false, isHint: true)
         }
         show(rows, near: cursor)
     }

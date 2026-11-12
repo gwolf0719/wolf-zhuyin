@@ -361,18 +361,28 @@ private func type(_ keys: String, then last: Composer.Key? = nil, composer: inou
     for key in "1j4cl3" { last = composer.handle(.character(key)) }
     #expect(last.marked == "不好")
     #expect(last.prediction == "意思")
-    // Tab 列出所有預測；再按一次 Tab 選第一個。
+    // Tab 直接套用第一個預測，並列出全部（反白的是已經套用的那個）。
     let opened = composer.handle(.tab)
-    #expect(opened.handled)
-    #expect(opened.candidates.first == "意思")
+    #expect(opened.handled && opened.cyclesWithTab)
+    #expect(opened.marked == "不好意思" && opened.candidates.first == "意思" && opened.highlighted == 0)
     #expect(opened.candidates.count > 1)
-    #expect(composer.handle(.tab).marked == "不好意思")
     #expect(composer.handle(.enter).commit == "不好意思")
 
-    // 數字鍵選其他的預測。
+    // 再按 Tab 換成下一個；按到最後一個再按就回到第一個。↑ 換回上一個。
     for key in "1j4cl3" { last = composer.handle(.character(key)) }
     let list = composer.handle(.tab).candidates
-    #expect(composer.handle(.character("2")).marked == "不好" + list[1])
+    let second = composer.handle(.tab)
+    #expect(second.marked == "不好" + list[1] && second.highlighted == 1)
+    #expect(composer.handle(.up).marked == "不好" + list[0])
+    for _ in 0..<list.count { last = composer.handle(.tab) }
+    #expect(last.marked == "不好" + list[0])
+    // 接著打字就是接受：數字鍵也是照常打字（2＝ㄉ），不是選第幾個。
+    #expect(composer.handle(.character("2")).marked == "不好" + list[0] + "ㄉ")
+    _ = composer.handle(.escape)
+    // 套用後按退格：整個預測拿掉，回到原本的內容。
+    for key in "1j4cl3" { last = composer.handle(.character(key)) }
+    _ = composer.handle(.tab)
+    #expect(composer.handle(.backspace).marked == "不好")
     _ = composer.handle(.escape)
     // Esc 關掉預測清單，組字內容不變。
     for key in "1j4cl3" { last = composer.handle(.character(key)) }
@@ -413,7 +423,7 @@ private func type(_ keys: String, then last: Composer.Key? = nil, composer: inou
     let opened = composer.handle(.tab)
     #expect(opened.candidates.first == "吃")
     #expect(opened.candidates.contains("意思"))
-    #expect(composer.handle(.tab).marked == "不好吃")
+    #expect(opened.marked == "不好吃")
     _ = composer.handle(.escape)
 
     learning.history?.flush()
@@ -525,9 +535,8 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     let committed = composer.handle(.enter)
     #expect(committed.commit == "不好")
     #expect(committed.prediction == "意思")
-    let opened = composer.handle(.tab)
-    #expect(opened.candidates.first == "意思")
     let chosen = composer.handle(.tab)
+    #expect(chosen.candidates.first == "意思")
     #expect(chosen.marked == "意思")
     #expect(composer.handle(.enter).commit == "意思")
 }
@@ -569,8 +578,7 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     for key in "su3cl3?" { last = composer.handle(.character(key)) }
     #expect(last.commit == "你好？")
     #expect(last.prediction == "所以")
-    _ = composer.handle(.tab)
-    #expect(composer.handle(.character("1")).marked == "所以")
+    #expect(composer.handle(.tab).marked == "所以")
 }
 
 /// 英文送出後接英文預測，要補上詞間空白。
@@ -781,9 +789,11 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     #expect(offered?.prediction == "意思" && offered?.predictions.last == "說")
     let panel = composer.handle(.tab)
     #expect(panel.candidates.first == "意思" && panel.candidates.filter { $0 == "意思" }.count == 1)
-    let index = panel.candidates.firstIndex(of: "說")!
-    #expect(composer.handle(.character(Character("\(index + 1)"))).marked == "不好說")
-    // 前文變了：舊的外部預測不再出現。
+    var cycled = panel
+    for _ in 0..<panel.candidates.firstIndex(of: "說")! { cycled = composer.handle(.tab) }
+    #expect(cycled.marked == "不好說")
+    // 接受（→ 關掉清單）之後前文變了：舊的外部預測不再出現。
+    _ = composer.handle(.right)
     #expect(composer.predictionContext == "不好說")
     #expect(!(composer.handle(.tab).candidates.contains("意思") && composer.predictionContext == "不好"))
     _ = composer.handle(.escape)

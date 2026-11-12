@@ -130,3 +130,12 @@ private func type(_ keys: String, _ composer: inout Composer) -> Composer.Result
     // 標點後面的不要：只補到第一個標點之前。
     #expect(ModelOutput.predictions(from: "好，適合出去走走", after: "今天天氣很") == ["好"])
 }
+
+/// 模型預測的品質篩選：幾次取樣裡至少兩次一樣才列出來。
+@Test func modelPredictionsNeedAgreement() {
+    // 每次都不一樣：模型沒把握，不提示。
+    #expect(ModelOutput.agreed(["我會更新資料", "這邊有資料", "要出差", "會來"], after: "他說").isEmpty)
+    // 一致的留下，先達標的在前；整理過後一樣的也算（標點後面不看、前文重複的去掉）。
+    #expect(ModelOutput.agreed(["吃飯", "餐廳", "吃飯，然後回家", "我們一起去餐廳"], after: "我們一起去") == ["吃飯", "餐廳"])
+    #expect(ModelOutput.agreed(["很好", "很好", "很不好", "很好"], after: "今天天氣") == ["很好"])
+}
