@@ -811,16 +811,32 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     #expect(all.firstIndex(of: "膳")! < all.firstIndex(of: "饍") ?? .max)
 }
 
-/// 被當成數字的 104 想改成中文時，選字窗直接列出同音字，一次就能選到「伴」（使用者 2026-11-11：伴獸家家酒）。
+/// 照打的按鍵改回中文時，選字窗直接列出同音字，不必選了再開一次（使用者 2026-11-11：伴獸家家酒）。
 @Test func numberCanBeSwitchedToAnyHomophone() {
     var composer = Composer(segmenter: segmenter)
-    #expect(type("ji3ul4vu,3104", composer: &composer).marked == "我要寫104")
+    // 切成照打的 up␠ 之後再按 ↓：除了「因」，同音的「音」也直接列出來。
+    for key in "up " { _ = composer.handle(.character(key)) }
+    _ = composer.handle(.down)
+    #expect(composer.handle(.character("8")).marked == "up ")
     let panel = composer.handle(.down)
-    #expect(panel.candidates.first == "辦")
-    let index = panel.candidates.firstIndex(of: "伴")
-    #expect(index != nil, "第一頁沒有伴：\(panel.candidates)")
-    guard let index else { return }
-    #expect(composer.handle(.character(Character("\(index + 1)"))).marked == "我要寫伴")
-    // 後面接著打，選好的字不會變。
-    #expect(type("g.4ru8 ru8 ru.3", composer: &composer).marked == "我要寫伴受家家酒")
+    #expect(panel.candidates.contains("因") && panel.candidates.contains("音"), "\(panel.candidates)")
+}
+
+/// 全是數字鍵的字接在中文後面要轉成中文：前一個字的聲調和韻母剛好也是數字鍵時（片 qu04、寫 vu,3）不能誤當成「數字後面」
+///（使用者 2026-11-12：影片吧變成影片 187；伴獸家家酒的伴變成 104）。
+@Test func digitOnlySyllablesAfterChinese() {
+    func run(_ keys: String) -> String {
+        var composer = Composer(segmenter: segmenter)
+        return type(keys, composer: &composer).marked
+    }
+    #expect(run("u/3qu04187") == "影片吧")
+    #expect(run("w8 2k7u/3qu04187") == "他的影片吧")
+    #expect(run("ji3ul4vu,3104g.4ru8 ru8 ru.3").hasSuffix("家家酒"))
+    #expect(!run("ji3ul4vu,3104g.4ru8 ru8 ru.3").contains("104"))
+    // 認得的英數字後面也一樣。
+    #expect(run("mp4187") == "mp4吧")
+    // 真正的數字不受影響。
+    #expect(run("0936123456") == "0936123456")
+    #expect(run("sha256") == "sha256")
+    #expect(run("ji3u.3100m06") == "我有100元")
 }

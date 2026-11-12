@@ -93,6 +93,8 @@ public struct Segmenter: Sendable {
         var isCorrection = false
         /// 原樣輸出的單一按鍵。
         var isRawKey = false
+        /// 按鍵全是數字的中文詞（187 吧、54 至）。
+        var isDigitOnly = false
         /// 標點邊：不改變前面的語言狀態，全形或半形等整條路徑定案後再決定。
         var punctuation: Character? = nil
     }
@@ -593,6 +595,9 @@ public struct Segmenter: Sendable {
                     // 緊接在英數字後面的不修，避免把英文字的後半段改成中文。
                     if edge.isCorrection, position > 0, state.language == .english,
                        keys[position - 1].isLetter || keys[position - 1].isNumber { continue }
+                    // 全是數字鍵的字緊接在數字後面時是在打數字（電話、編號、sha256），不轉成中文。
+                    // 只看「原樣輸出的數字鍵」：前一個中文字的聲調（影片 qu04 後面的 187）和認得的英文字（mp4）都不算。
+                    if edge.isDigitOnly, let previous = entry.edge, previous.isRawKey, previous.text.last?.isNumber == true { continue }
                     // 修正只能用在沒認出來的按鍵上，不可以蓋掉本來就打得對的內容。
                     if edge.isCorrection, !(edge.start..<edge.end).contains(where: unexplained.contains) { continue }
                     // 標點邊維持前一個語言狀態，不算切換。
@@ -786,10 +791,9 @@ public struct Segmenter: Sendable {
                     // 用通用規則猜的才需要成詞佐證；個人紀錄可以單字套用。
                     // 但兩種修正都算「修正」，一樣不可以緊接在英數字後面（在 pieces 的動態規劃裡檢查）。
                     // 全是數字鍵的字（56 直、93 矮）緊接在數字後面時是在打數字（電話、編號、sha256），不轉成中文。
-                    // 前一個數字若是前一個字的聲調（su3 後面的 54），不算。
-                    let isDigitRun = keys[start..<option.end].allSatisfy(\.isASCIIDigit) && start > 0 && keys[start - 1].isASCIIDigit
-                        && !(Dachen.tones[keys[start - 1]] != nil && start > 1 && keys[start - 2].isASCIILetter)
-                    if !isDigitRun, let entry = entries(for: next.reading).first,
+                    // 前一個數字是不是前一個中文字的一部分（影片 qu04 後面的 187）要看路徑，所以留到動態規劃裡檢查。
+                    let isDigitOnly = keys[start..<option.end].allSatisfy(\.isASCIIDigit)
+                    if let entry = entries(for: next.reading).first,
                        !next.isGuess || (next.ends.count >= 2 && entry.score >= weights.typoMinWordScore) {
                         // 最常見的同音詞之外，也帶上幾個分數相近的，讓上下文去挑。
                         // 使用者自己選過的詞優先，那時不再讓上下文改掉。
@@ -801,7 +805,7 @@ public struct Segmenter: Sendable {
                             result.append(Edge(
                                 start: start, end: option.end, language: .chinese, text: homophone.text,
                                 score: homophone.score + next.penalty + weights.chineseWord, reading: next.reading,
-                                syllableEnds: next.ends, isCorrection: next.penalty < 0
+                                syllableEnds: next.ends, isCorrection: next.penalty < 0, isDigitOnly: isDigitOnly
                             ))
                         }
                     }
