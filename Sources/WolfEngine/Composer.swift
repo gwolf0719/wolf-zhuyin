@@ -106,6 +106,11 @@ public struct Composer: Sendable {
     /// 剛送出、組字區已清空時，送出的那段文字；用來預測接下來的內容。按了任何鍵就失效，
     /// 所以只有「送出後馬上按 Tab」會被攔下來，其他時候 Tab 照常交給 app。
     private var committedText: String?
+    /// 剛送出的那一段（文字、按鍵、選字讀音、當時的全半形語境）。送出後緊接著按退格，可以整段拉回組字區重改。
+    /// 按了任何鍵、點了別處、換了視窗就失效。
+    private var lastCommit: (text: String, keys: [Character], notes: [String?], afterChinese: Bool)?
+    /// 拉回來的那段按鍵：原封不動再送出時不重複記進用詞紀錄。
+    private var reopenedKeys: String?
 
     public init(segmenter: Segmenter) {
         self.segmenter = segmenter
@@ -176,6 +181,30 @@ public struct Composer: Sendable {
     /// 外部預測太長的不要（輸入法是補幾個字，不是代寫整段）。
     public static let maximumExternalPredictionLength = 12
 
+    /// 剛送出、現在按退格可以拉回來重改的那段文字；沒有就是 nil。
+    /// 外殼要先確認游標前面真的還是這段文字，再呼叫 `reopen()` 並把它換成組字區。
+    public var reopenableText: String? { keys.isEmpty && panel == nil ? lastCommit?.text : nil }
+
+    /// 把剛送出的那段拉回組字區。回傳的畫面要「取代」文件裡剛送出的文字。
+    public mutating func reopen() -> Result? {
+        guard keys.isEmpty, let last = lastCommit else { return nil }
+        lastCommit = nil
+        committedText = nil
+        panel = nil
+        fix = nil
+        afterChinese = last.afterChinese
+        keys = last.keys
+        notes = last.notes
+        cursor = keys.count
+        reopenedKeys = String(keys)
+        return state()
+    }
+
+    /// 游標可能已經不在剛送出的文字後面（點了別處、換了視窗）：不能再拉回來。
+    public mutating func forgetCommit() {
+        lastCommit = nil
+    }
+
     /// 不再提示送出後的預測（使用者點了別的地方、或停太久沒動作）。
     public mutating func dismissPrediction() {
         committedText = nil
@@ -203,11 +232,15 @@ public struct Composer: Sendable {
         guard let commitStop else { return state() }
         let committed = String(characters[..<commitStop.offset])
         record(String(keys[..<commitStop.key]))
+        let sent = (text: committed, keys: Array(keys[..<commitStop.key]), notes: Array(notes[..<commitStop.key]), afterChinese: afterChinese)
         notes.removeFirst(commitStop.key)
         keys.removeFirst(commitStop.key)
         cursor = keys.count
         afterChinese = true
-        if keys.isEmpty { committedText = committed }
+        if keys.isEmpty {
+            committedText = committed
+            lastCommit = sent
+        }
         var result = state()
         result.commit = committed
         return result
@@ -253,8 +286,9 @@ public struct Composer: Sendable {
     }
 
     /// 把送出的內容記進用詞紀錄。
-    private func record(_ committedKeys: String) {
-        guard let history = segmenter.history else { return }
+    private mutating func record(_ committedKeys: String) {
+        defer { reopenedKeys = nil }
+        guard let history = segmenter.history, committedKeys != reopenedKeys else { return }
         for sentence in segmenter.sentences(committedKeys, afterChinese: afterChinese) { history.record(sentence) }
     }
 
@@ -271,6 +305,7 @@ public struct Composer: Sendable {
     /// 送出一段文字並清空組字狀態。
     private mutating func commit(_ text: String, handled: Bool = true) -> Result {
         record(String(keys))
+        lastCommit = keys.isEmpty ? nil : (text, keys, notes, afterChinese)
         keys = []
         cursor = 0
         panel = nil
@@ -289,6 +324,7 @@ public struct Composer: Sendable {
         }
         let text = commit(text(of: keys)).commit
         committedText = nil
+        lastCommit = nil
         return text
     }
 
@@ -301,6 +337,7 @@ public struct Composer: Sendable {
         // 送出後的預測只留給緊接著的這一鍵。
         let lastCommitted = committedText
         committedText = nil
+        lastCommit = nil
         if panel != nil {
             fix = nil
             if let result = handleInPanel(key) { return result }
@@ -385,8 +422,13 @@ public struct Composer: Sendable {
             move(key)
             return state()
         case .up:
-            // 組字中吃掉，以免游標跑出組字區。
-            return keys.isEmpty ? Result(handled: false) : state()
+            guard !keys.isEmpty else { return Result(handled: false) }
+            // 跳到游標左邊最近一個「輸入法沒把握」的字並開選字窗；左邊沒有了就從結尾繞回來。
+            // 不必用方向鍵一格一格移過去。沒有可疑的字時只吃掉按鍵，以免游標跑出組字區。
+            let doubtful = segmenter.doubtfulStops(String(keys), afterChinese: afterChinese, fixed: Set(readings.keys))
+            guard let target = doubtful.last(where: { $0 < cursor }) ?? doubtful.last else { return state() }
+            cursor = target
+            return handle(.down)
         }
     }
 

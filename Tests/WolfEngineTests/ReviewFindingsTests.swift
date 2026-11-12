@@ -44,7 +44,7 @@ private func type(_ keys: String, _ composer: inout Composer) -> Composer.Result
     var segmenter = Segmenter(lexicon: lexicon)
     segmenter.history = UserHistory()
     var composer = Composer(segmenter: segmenter)
-    for _ in 0..<2 {
+    for _ in 0..<3 {
         _ = type("hello world", &composer)
         _ = composer.handle(.enter)
     }

@@ -121,6 +121,7 @@ final class WolfInputController: IMKInputController {
             // 只在沒有組字時收掉預測；組字中的點擊照系統原本的方式處理。
             // 游標可能被點到別處了，之前送出的文字不再是前文。
             recentCommitted = ""
+            composer.forgetCommit()
             if composerIsIdle { dismissPrediction() }
             return false
         }
@@ -129,7 +130,9 @@ final class WolfInputController: IMKInputController {
             return false
         }
 
-        let result = composer.handle(Self.key(for: event))
+        let key = Self.key(for: event)
+        if key == .backspace, reopenCommitted(in: client) { return true }
+        let result = composer.handle(key)
         // 只記有沒有處理，不記按了什麼鍵。
         debugLog("handle keyDown handled=\(result.handled) commit=\(result.commit != nil)")
         if let text = result.commit {
@@ -164,8 +167,42 @@ final class WolfInputController: IMKInputController {
         return result.handled
     }
 
+    /// 剛送出就按退格：把那一段拉回組字區重改。只有確認得了「游標前面真的還是剛送出的文字」的 app 才做；
+    /// 確認不了（終端機等不回報內容的 app）或 app 沒照要求取代文字時，退格照常刪一個字。
+    private func reopenCommitted(in client: IMKTextInput) -> Bool {
+        guard let text = composer.reopenableText else { return false }
+        let length = text.utf16.count
+        let selection = client.selectedRange()
+        guard selection.location != NSNotFound, selection.length == 0, selection.location >= length else { return false }
+        let range = NSRange(location: selection.location - length, length: length)
+        guard client.attributedSubstring(from: range)?.string == text, let result = composer.reopen() else { return false }
+        let cursorLocation = String(result.marked.prefix(result.cursor)).utf16.count
+        client.setMarkedText(
+            Self.markedText(for: result),
+            selectionRange: NSRange(location: cursorLocation, length: 0),
+            replacementRange: range
+        )
+        // app 沒有照 replacementRange 取代（組字區接在原文後面，變成兩份）：收回組字區，當作沒發生。
+        let marked = client.markedRange()
+        guard marked.location == range.location else {
+            debugLog("reopen：app 沒有取代原文，取消")
+            _ = composer.handle(.escape)
+            client.setMarkedText("", selectionRange: NSRange(location: 0, length: 0), replacementRange: Self.noReplacement)
+            return false
+        }
+        debugLog("reopen：已拉回組字區")
+        recentCommitted = String(recentCommitted.dropLast(text.count))
+        predictionExpiry?.cancel()
+        predictionExpiry = nil
+        composerIsIdle = false
+        CandidatePanel.shared.hide()
+        lastCursorRect = Self.cursorRect(in: client, at: cursorLocation)
+        return true
+    }
+
     override func deactivateServer(_ sender: Any!) {
         recentCommitted = ""
+        composer.forgetCommit()
         dismissPrediction()
         super.deactivateServer(sender)
         // 新版已換好、要結束行程換版之前，先等學習紀錄寫完。

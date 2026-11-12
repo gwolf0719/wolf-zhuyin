@@ -108,6 +108,30 @@ public final class UserHistory: @unchecked Sendable {
         file.save { [self] in lock.withLock { following } }
     }
 
+    /// 夠有把握才主動提示：這個後續至少出現這麼多次，而且佔這段前文所有後續的這個比例以上。
+    /// 依據（2026-11-12，本機用詞統計）：不設門檻時第一個建議約 47% 命中；佔比過半的有六成到九成多，佔比不到三成的只有兩成。
+    public static let confidentCount = 3
+    public static let confidentShare = 0.5
+
+    /// 這段前文（單一個鍵值）後面夠有把握的那個後續；沒有就是 nil。
+    public func confident(after context: String) -> String? {
+        lock.withLock {
+            guard let followers = following[context],
+                  let top = followers.max(by: { ($0.value, $1.key) < ($1.value, $0.key) }),
+                  top.value >= Self.confidentCount,
+                  Double(top.value) >= Self.confidentShare * Double(followers.values.reduce(0, +)) else { return nil }
+            return top.key
+        }
+    }
+
+    /// 有把握的後續：先看較長的前文（前兩個字），再看前一個字。
+    public func confident(afterWords words: [String]) -> String? {
+        for key in Self.contextKeys(for: words) {
+            if let next = confident(after: key) { return next }
+        }
+        return nil
+    }
+
     /// 這段前文後面常接什麼，最常見的在前。次數相同時照字典序，讓結果固定。
     public func likely(after words: [String]) -> [String] {
         lock.withLock {

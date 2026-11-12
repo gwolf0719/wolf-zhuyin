@@ -13,7 +13,7 @@ let usage = """
 """
 
 let arguments = Array(CommandLine.arguments.dropFirst())
-guard arguments.count >= 2 || arguments.first == "personal" else {
+guard arguments.count >= 2 || arguments.first == "personal" || arguments.first == "predictions" else {
     print(usage)
     exit(2)
 }
@@ -78,6 +78,46 @@ case "steps":
     // 一鍵一鍵打一句話，印出每一步組字區的樣子。
     guard let result = evaluation.stability(arguments[1]) else { exit(1) }
     print(result.steps.joined(separator: " | "))
+
+case "candidates":
+    // 游標在結尾時按 ↓ 會列出什麼，以及按 ↑ 會停在哪些按鍵位置。
+    print(segmenter.candidates(arguments[1]).map { "\($0.text)@\($0.start)" }.joined(separator: " "))
+    print("可疑位置：\(segmenter.doubtfulStops(arguments[1]))")
+
+case "predictions":
+    // 預測準不準：預測顯示時，第一個建議有幾成真的是接下來的內容。
+    // 詞庫來源用評測句子量；個人紀錄用本機的用詞統計量（同一段前文後面，最常見的那個詞佔幾成）。
+    var shown = 0, hit = 0
+    for file in ["Eval/dev.txt", "Eval/test.txt"] {
+        guard let content = try? String(contentsOfFile: file, encoding: .utf8) else { continue }
+        for line in content.split(separator: "\n") where !line.hasPrefix("#") {
+            let characters = Array(line)
+            for index in characters.indices.dropFirst(2) {
+                guard let first = segmenter.predictions(following: String(characters[..<index])).first else { continue }
+                shown += 1
+                if String(characters[index...]).hasPrefix(first) { hit += 1 }
+            }
+        }
+    }
+    print("詞庫來源：顯示 \(shown) 次，第一個建議命中 \(hit) 次（\(shown == 0 ? 0 : hit * 100 / shown)%）")
+    let directory = ProcessInfo.processInfo.environment["WOLF_DATA"].map { URL(fileURLWithPath: $0) }
+        ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/WolfZhuyin")
+    let history = UserHistory(fileURL: directory.appendingPathComponent("history.json"))
+    var all = (shown: 0, hit: 0), confident = (shown: 0, hit: 0)
+    for (context, followers) in history.all {
+        let total = followers.values.reduce(0, +)
+        guard let top = followers.values.max(), top >= UserHistory.minimumCount else { continue }
+        all.shown += total
+        all.hit += top
+        if history.confident(after: context) != nil {
+            confident.shown += total
+            confident.hit += top
+        }
+    }
+    func percent(_ pair: (shown: Int, hit: Int)) -> Int { pair.shown == 0 ? 0 : pair.hit * 100 / pair.shown }
+    print("個人紀錄（全部）：顯示 \(all.shown) 次，命中 \(all.hit) 次（\(percent(all))%）")
+    print("個人紀錄（只算有把握的）：顯示 \(confident.shown) 次，命中 \(confident.hit) 次（\(percent(confident))%）")
+    print("註：個人紀錄的數字是拿同一份紀錄回頭算的，會比實際樂觀。")
 
 case "personal":
     // 用本機的學習紀錄評測（只在這台電腦跑，紀錄不離開本機、不進版本庫）。

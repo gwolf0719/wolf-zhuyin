@@ -112,6 +112,10 @@ public struct Segmenter: Sendable {
         var isStrong = false
     }
 
+    /// 預測只在夠有把握時才出現。量出來的命中率（2026-11-12，`wolf predictions`）：
+    /// 詞庫的常見後續 11%、個人紀錄全部 46%、個人紀錄裡有把握的 75%。猜錯的提示會讓人學會不看它，所以預設只留最後一種。
+    public var predictsOnlyWhenConfident = true
+
     private static let maxSyllablesPerWord = 8
 
     /// 有全形版本的標點鍵。
@@ -298,6 +302,32 @@ public struct Segmenter: Sendable {
         return result
     }
 
+    /// 同音字的分數差不到這麼多（log10），就算「沒把握」：選錯的機會不小。
+    /// 1.0 會算進 在／再、他／她、作／做、以／已、是／事；不會算進 我、你、好 這類幾乎沒有對手的字。
+    static let doubtfulMargin = 1.0
+
+    /// 輸入法沒把握的地方（按鍵位置，由左到右）：按 ↑ 會直接跳過去開選字窗。
+    /// - 有分數相近的同音字詞（在／再、我在／我再）。同音的寫法只有一種、或第二名差很遠的不算。
+    /// - 沒認出來的按鍵（多半是打錯）。
+    /// - Parameter fixed: 使用者已經選定的字的位置，不再列為可疑。
+    public func doubtfulStops(_ input: String, afterChinese: Bool = true, fixed: Set<Int> = []) -> [Int] {
+        let keys = Array(input)
+        let all = pieces(keys, afterChinese: afterChinese, showPending: false)
+        var result: [Int] = []
+        for (index, piece) in all.enumerated() {
+            if let reading = piece.reading {
+                guard !fixed.contains(piece.keys.lowerBound) else { continue }
+                let same = entries(for: reading)
+                if same.count >= 2, same[0].score - same[1].score < Self.doubtfulMargin { result.append(piece.keys.upperBound) }
+            } else if piece.isRawKey, keys[piece.keys.lowerBound].isASCIILetter {
+                // 一串沒認出來的按鍵只停在最後面。
+                let next = index + 1 < all.count ? all[index + 1] : nil
+                if !(next?.isRawKey == true && keys[next!.keys.lowerBound].isASCIILetter) { result.append(piece.keys.upperBound) }
+            }
+        }
+        return result
+    }
+
     /// 游標前面是英文或沒認出來的按鍵：提供強制轉成中文、以及注音符號本身。
     private func switchToChinese(_ keys: [Character], cursor: Int, afterChinese: Bool) -> [Candidate] {
         // 游標前面連續的非中文按鍵（英文字、沒認出來的按鍵），往前到中文、定案文字或空白為止。
@@ -325,14 +355,31 @@ public struct Segmenter: Sendable {
         let forced = forcedPieces.map(\.text).joined()
         if forced.contains(where: { !$0.isASCII && $0.isLetter }) {
             // 整段都轉成中文時帶上讀音，選了之後還能再選字。
-            let readings = forcedPieces.compactMap(\.reading)
-            let reading = readings.count == forcedPieces.count ? readings.joined(separator: "-") : nil
+            // 當成聲調的空白可能自成一段，不算在內。
+            let words = forcedPieces.filter { $0.text != " " && !$0.text.isEmpty }
+            let readings = words.compactMap(\.reading)
+            let reading = readings.count == words.count ? readings.joined(separator: "-") : nil
             result.append(Candidate(text: forced, start: start, reading: reading))
             // 整段是一個字或一個詞時，同音的也一起列：104 被當成數字，想打的是「伴」不是「辦」，
             // 不必先切成中文再開一次選字窗（使用者 2026-11-11：伴獸家家酒）。
-            if forcedPieces.count == 1, let reading {
+            if words.count == 1, let reading {
                 for entry in entries(for: reading) where entry.text != forced {
                     result.append(Candidate(text: entry.text, start: start, reading: reading))
+                }
+            }
+        }
+        // 其他可能的打錯：整段當成一個音節，照容錯規則修正出的其他讀音（最像的在前），各列最常見的那個字。
+        if weights.typoTolerance {
+            let spanKeys = Array(span)
+            // 結尾的空白可能是聲調，也可能只是分隔，兩種都算「整段」。
+            let ends = spanKeys.last == " " ? [spanKeys.count, spanKeys.count - 1] : [spanKeys.count]
+            let options = chinese.syllableOptions(in: spanKeys, from: 0)
+                .filter { $0.penalty < 0 && ends.contains($0.end) }.sorted { $0.penalty > $1.penalty }
+            // 最像的那個讀音多列幾個同音字（uvp␠ → 心、新、欣），其餘讀音各列一個。
+            for (index, option) in options.prefix(Self.correctionSlots + 1).enumerated() {
+                for entry in entries(for: option.reading).prefix(index == 0 ? 4 : 1)
+                where !result.contains(where: { $0.text == entry.text }) {
+                    result.append(Candidate(text: entry.text, start: start, reading: option.reading))
                 }
             }
         }
@@ -431,7 +478,10 @@ public struct Segmenter: Sendable {
     public func predictions(following committed: String) -> [String] {
         guard let last = committed.last else { return [] }
         if "。？！?!".contains(last) {
-            return Array((history?.likely(after: [UserHistory.sentenceStart]) ?? []).prefix(9))
+            let likely = history?.likely(after: [UserHistory.sentenceStart]) ?? []
+            guard predictsOnlyWhenConfident else { return Array(likely.prefix(9)) }
+            guard let top = history?.confident(after: UserHistory.sentenceStart) else { return [] }
+            return Array(([top] + likely.filter { $0 != top }).prefix(9))
         }
         let words: [String]
         if last.isASCII {
@@ -444,8 +494,14 @@ public struct Segmenter: Sendable {
     }
 
     /// 前文（照順序的詞）之後最可能接什麼。
+    /// 只有個人紀錄夠有把握時才預測（寧缺勿濫）；有把握的排第一，其餘的（較少用的搭配、詞庫的常見詞）
+    /// 只在使用者按 Tab 展開時當成其他選項。
     private func predictions(afterWords words: [String]) -> [String] {
         var result = history?.likely(after: words) ?? []
+        if predictsOnlyWhenConfident {
+            guard let top = history?.confident(afterWords: words) else { return [] }
+            result = [top] + result.filter { $0 != top }
+        }
 
         // 結尾連續的中文字：較長的前文比較準，排前面。
         var tail = ""

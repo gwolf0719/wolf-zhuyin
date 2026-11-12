@@ -2,11 +2,17 @@ import Foundation
 import Testing
 @testable import WolfEngine
 
-private let segmenter = Segmenter(
-    lexicon: try! Lexicon(contentsOf: URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        .appendingPathComponent("Data/mcbopomofo/data.txt"))
-)
+/// 這個檔案測的是組字與預測的「操作流程」，所以打開所有預測來源；
+/// 「只在有把握時才預測」的預設行為另外在 predictionsOnlyWhenConfident 測。
+private let segmenter: Segmenter = {
+    var segmenter = Segmenter(
+        lexicon: try! Lexicon(contentsOf: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Data/mcbopomofo/data.txt"))
+    )
+    segmenter.predictsOnlyWhenConfident = false
+    return segmenter
+}()
 
 /// 模擬逐鍵打字，回傳（送出的文字, 最後的組字區）。
 private func type(_ keys: String, then last: Composer.Key? = nil, composer: inout Composer) -> (committed: String, marked: String, cursor: Int) {
@@ -839,4 +845,112 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     #expect(run("0936123456") == "0936123456")
     #expect(run("sha256") == "sha256")
     #expect(run("ji3u.3100m06") == "我有100元")
+}
+
+/// 預設只在夠有把握時才預測：詞庫的常見後續不主動提示；自己打過 3 次以上、而且佔那段前文一半以上的才提示
+///（2026-11-12 量測：詞庫來源命中 11%、個人紀錄有把握的 75%）。
+@Test func predictionsOnlyWhenConfident() {
+    var strict = segmenter
+    strict.predictsOnlyWhenConfident = true
+    strict.history = UserHistory()
+    var composer = Composer(segmenter: strict)
+    // 詞庫知道「不好」後面常接「意思」，但沒有個人紀錄就不提示，Tab 也照常交還給 app。
+    #expect(composer.handle(.character("1")).prediction == nil)
+    for key in "j4cl3" { #expect(composer.handle(.character(key)).prediction == nil) }
+    #expect(composer.handle(.tab).handled == false)
+    // 打過兩次還不夠。
+    for _ in 0..<2 { strict.history?.record(["不好", "吃"]) }
+    composer = Composer(segmenter: strict)
+    var last = Composer.Result(handled: true)
+    for key in "1j4cl3" { last = composer.handle(.character(key)) }
+    #expect(last.prediction == nil)
+    // 第三次開始提示；展開後其他來源排在後面當選項。
+    strict.history?.record(["不好", "吃"])
+    composer = Composer(segmenter: strict)
+    for key in "1j4cl3" { last = composer.handle(.character(key)) }
+    #expect(last.prediction == "吃")
+    let panel = composer.handle(.tab)
+    #expect(panel.candidates.first == "吃" && panel.candidates.contains("意思"))
+    _ = composer.handle(.escape)
+    // 同一段前文後面接的東西很分散時不提示（佔比不到一半）。
+    for next in ["看", "玩", "說", "用"] { for _ in 0..<2 { strict.history?.record(["不好", next]) } }
+    composer = Composer(segmenter: strict)
+    for key in "1j4cl3" { last = composer.handle(.character(key)) }
+    #expect(last.prediction == nil)
+}
+
+/// 送出後緊接著可以把整段拉回組字區重改；按了別的鍵就不行（使用者 2026-11-12：打錯很難改）。
+@Test func committedTextCanBeReopened() {
+    var strict = segmenter
+    strict.history = UserHistory()
+    var composer = Composer(segmenter: strict)
+    #expect(composer.reopenableText == nil)
+    _ = type("ji3y94ru8 ", composer: &composer)
+    #expect(composer.handle(.enter).commit == "我在家")
+    #expect(composer.reopenableText == "我在家")
+    let reopened = composer.reopen()
+    #expect(reopened?.marked == "我在家")
+    #expect(reopened?.cursor == 3)
+    #expect(composer.reopenableText == nil)
+    // 拉回來之後照常編輯：移到「在」後面改成「再」。
+    _ = composer.handle(.left)
+    let panel = composer.handle(.down)
+    let index = panel.candidates.firstIndex(of: "再")!
+    #expect(composer.handle(.character(Character("\(index + 1)"))).marked == "我再家")
+    #expect(composer.handle(.enter).commit == "我再家")
+    // 選過的字拉回來還能再選一次。
+    _ = composer.reopen()
+    _ = composer.handle(.left)
+    #expect(composer.handle(.down).candidates.contains("在"))
+    _ = composer.handle(.escape)
+    #expect(composer.handle(.enter).commit == "我再家")
+    // 原封不動再送出，不重複記進用詞紀錄。
+    #expect(strict.history?.count(after: "我", next: "再") == 1)
+    // 送出後按了別的鍵：不能再拉回來。
+    _ = composer.handle(.character("j"))
+    #expect(composer.reopenableText == nil)
+    _ = composer.handle(.escape)
+    // 句末標點自動送出的也可以拉回來。
+    #expect(type("su3cl3?", composer: &composer).committed == "你好？")
+    #expect(composer.reopenableText == "你好？")
+    #expect(composer.reopen()?.marked == "你好？")
+    _ = composer.handle(.escape)
+    // 點了別處（外殼呼叫 forgetCommit）之後不行。
+    _ = type("su3cl3", composer: &composer)
+    _ = composer.handle(.enter)
+    composer.forgetCommit()
+    #expect(composer.reopenableText == nil)
+}
+
+/// 按 ↑ 直接跳到沒把握的字並開選字窗，不必一格一格移（使用者 2026-11-12：打錯很難改）。
+@Test func upArrowJumpsToDoubtfulCharacter() {
+    var composer = Composer(segmenter: segmenter)
+    // 「在」有分數相近的同音字「再」；「喜歡」「咖啡」是詞，不算可疑。
+    _ = type("ji3y94vu3cj0 d8 zo ", composer: &composer)
+    let before = composer.handle(.left)
+    _ = composer.handle(.right)
+    #expect(before.marked == "我在喜歡咖啡")
+    let jumped = composer.handle(.up)
+    #expect(jumped.cursor == 2, "游標應該停在「在」後面：\(jumped.cursor)")
+    #expect(jumped.candidates.contains("再"))
+    // 選了之後這個字就不再可疑。
+    let index = jumped.candidates.firstIndex(of: "再")!
+    _ = composer.handle(.character(Character("\(index + 1)")))
+    _ = composer.handle(.right)
+    #expect(composer.handle(.up).cursor != 2)
+    _ = composer.handle(.escape)
+    // 沒在組字時 ↑ 交還給 app。
+    var idle = Composer(segmenter: segmenter)
+    #expect(idle.handle(.up).handled == false)
+}
+
+/// 沒認出來的按鍵按 ↓：除了強制轉成中文，也列出其他可能的打錯。
+@Test func unrecognizedKeysOfferSeveralCorrections() {
+    var composer = Composer(segmenter: segmenter)
+    _ = type("uvp ", composer: &composer)
+    let panel = composer.handle(.down)
+    // 順序顛倒的 vup（心、新）之外，還有別種修正（少一鍵、按到隔壁）。
+    #expect(panel.candidates.first == "心", "\(panel.candidates)")
+    #expect(panel.candidates.contains("新"))
+
 }

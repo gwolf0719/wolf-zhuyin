@@ -31,8 +31,11 @@ run() {
 run 'su3cl3{enter}' '你好'
 run 'ji3m/4Mac283y4,hello world!' '我用Mac打字，hello world！'
 run 'su3cl3?ji3' '你好？我'
-run '1j4cl3{tab}{enter}' '不好意思'
-run '1j4cl3{enter}{tab}{tab}{enter}' '不好意思'
+# 送出後按退格：整段拉回組字區重改（第一下拉回，第二下才刪字）。
+run 'su3cl3{enter}{delete}{delete}{enter}' '你'
+run 'ji3y94ru8 {enter}{delete}{left}{down}2{enter}' '我再家'
+# ↑ 直接跳到沒把握的字並開選字窗。
+run 'ji3y94ru8 {up}2{enter}' '我再家'
 run 'hello, world{enter}' 'hello, world'
 run 'su3cl' '你ㄏㄠ'
 run 'y94{down}1' '在'
