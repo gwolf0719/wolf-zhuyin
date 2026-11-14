@@ -36,7 +36,7 @@ final class WolfInputController: IMKInputController {
     }
 
     override func activateServer(_ sender: Any!) {
-        debugLog("activateServer")
+        debugLog("activateServer app=\((sender as? IMKTextInput)?.bundleIdentifier() ?? "?")")
         super.activateServer(sender)
         reloadPreferences()
     }
@@ -131,7 +131,7 @@ final class WolfInputController: IMKInputController {
             return false
         }
         guard let event, event.type == .keyDown, let client = sender as? IMKTextInput else {
-            debugLog("handle：不是 keyDown 或 client 不支援文字輸入")
+            debugLog("handle：不是 keyDown 或 client 不支援文字輸入 type=\(event?.type.rawValue ?? 0) client=\(type(of: sender as Any))")
             return false
         }
 
@@ -139,7 +139,7 @@ final class WolfInputController: IMKInputController {
         if key == .backspace, reopenCommitted(in: client) { return true }
         let result = wrapSelection(for: key, in: client) ?? composer.handle(key)
         // 只記有沒有處理，不記按了什麼鍵。
-        debugLog("handle keyDown handled=\(result.handled) commit=\(result.commit != nil)")
+        debugLog("handle keyDown app=\(client.bundleIdentifier() ?? "?") handled=\(result.handled) commit=\(result.commit != nil) marked=\(!result.marked.isEmpty)")
         if let text = result.commit {
             client.insertText(text, replacementRange: Self.noReplacement)
             recentCommitted = String((recentCommitted + text).suffix(ModelPredictor.contextLength))
@@ -216,6 +216,7 @@ final class WolfInputController: IMKInputController {
     }
 
     override func deactivateServer(_ sender: Any!) {
+        debugLog("deactivateServer app=\((sender as? IMKTextInput)?.bundleIdentifier() ?? "?")")
         recentCommitted = ""
         composer.forgetCommit()
         dismissPrediction()
@@ -279,11 +280,12 @@ final class WolfInputController: IMKInputController {
 }
 
 /// 建了 ~/Library/Logs/WolfZhuyin.debug 這個空檔才寫紀錄到 WolfZhuyin.log。紀錄不含按鍵內容。
-private let debugLogURL: URL? = {
-    let logs = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs")
-    guard FileManager.default.fileExists(atPath: logs.appendingPathComponent("WolfZhuyin.debug").path) else { return nil }
-    return logs.appendingPathComponent("WolfZhuyin.log")
-}()
+/// 每次都重新看開關在不在：出問題的當下就能打開，不必重啟輸入法（重啟會把出事的狀態清掉）。
+private let debugLogFolder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs")
+private var debugLogURL: URL? {
+    guard FileManager.default.fileExists(atPath: debugLogFolder.appendingPathComponent("WolfZhuyin.debug").path) else { return nil }
+    return debugLogFolder.appendingPathComponent("WolfZhuyin.log")
+}
 
 func debugLog(_ message: String) {
     guard let url = debugLogURL, let data = "\(Date()) \(message)\n".data(using: .utf8) else { return }
