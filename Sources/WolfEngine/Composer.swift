@@ -256,7 +256,8 @@ public struct Composer: Sendable {
         committedText = nil
     }
 
-    /// 句末標點（。？！）一出現就把到那裡為止的內容送出，後面的留在組字區。
+    /// 句末標點（。？！）一出現就把到那裡為止的內容送出，後面的留在組字區；
+    /// 一直沒有句末標點、打太長時，改由 `longRunStop` 找逗號或字尾送出。
     /// `.` 也是韻母ㄡ，所以要等它後面又打了一個鍵、仍然被當成句號，而且前面是中文字時才算數；`?` `!` `>` 沒有歧義，立刻送出。
     private mutating func autoCommit() -> Result {
         guard panel == nil, cursor == keys.count else { return state() }
@@ -275,6 +276,7 @@ public struct Composer: Sendable {
             let afterChineseCharacter = before.map { !$0.isASCII && $0.isLetter } ?? false
             if afterChineseCharacter, stop.key < keys.count { commitStop = stop }
         }
+        if commitStop == nil { commitStop = longRunStop(characters, layout.stops) }
         guard let commitStop else { return state() }
         let committed = String(characters[..<commitStop.offset])
         record(String(keys[..<commitStop.key]))
@@ -282,7 +284,7 @@ public struct Composer: Sendable {
         notes.removeFirst(commitStop.key)
         keys.removeFirst(commitStop.key)
         cursor = keys.count
-        afterChinese = true
+        afterChinese = committed.last.map { !$0.isASCII } ?? true
         if keys.isEmpty {
             committedText = committed
             lastCommit = sent
@@ -290,6 +292,27 @@ public struct Composer: Sendable {
         var result = state()
         result.commit = committed
         return result
+    }
+
+    /// 組字區超過這麼多字還沒遇到句末標點：在最後一個逗號（含頓號、分號、冒號）送出，留下現在打的這一小句。
+    /// 組字區沒有送出的內容，換視窗、誤按 Esc、app 丟掉組字區時整段都會不見；使用者（2026-11-15）不想自己記得按 Enter。
+    public static let longRunLimit = 30
+    /// 連逗號都沒有時，超過這麼多字就把前面送出，只留最後 `longRunTail` 個字還能改。
+    public static let longRunHardLimit = 50
+    public static let longRunTail = 16
+
+    private func longRunStop(_ characters: [Character], _ stops: [(key: Int, offset: Int)]) -> (key: Int, offset: Int)? {
+        guard characters.count >= Self.longRunLimit else { return nil }
+        // 逗號的鍵（, ; ' 也是注音）要等後面又打了一個鍵、仍然顯示成標點，才算數。
+        if let stop = stops.last(where: { $0.offset > 0 && $0.key < keys.count && "，、；：".contains(characters[$0.offset - 1]) }) {
+            return stop
+        }
+        guard characters.count >= Self.longRunHardLimit else { return nil }
+        // 只在中文字或空白後面斷開，不把英文單字切成兩半。
+        return stops.last {
+            $0.offset > 0 && $0.offset <= characters.count - Self.longRunTail && $0.key < keys.count
+                && (!characters[$0.offset - 1].isASCII || characters[$0.offset - 1] == " ")
+        }
     }
 
     /// 退格後重打：重打的內容湊成一個完整音節時，跟剛刪掉的開頭比對。

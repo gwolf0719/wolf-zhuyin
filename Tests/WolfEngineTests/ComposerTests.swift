@@ -351,6 +351,37 @@ private func type(_ keys: String, then last: Composer.Key? = nil, composer: inou
     #expect(english.marked == "hello world. ok?")
 }
 
+/// 打了一長段都沒按 Enter：到逗號就自動送出，連逗號都沒有就把前面送出、只留最後一小段。
+@Test func longRunCommitsAtCommaOrKeepsOnlyTail() {
+    var composer = Composer(segmenter: segmenter)
+    let hello = String(repeating: "su3cl3", count: 15)  // 你好 x15 = 30 字
+    // 不到門檻：逗號不送出。
+    #expect(type(String(repeating: "su3cl3", count: 5) + ",su3", composer: &composer).committed == "")
+    _ = composer.handle(.escape)
+    // 超過門檻：逗號之後再打一個鍵確定它是逗號，才送出到逗號為止。
+    let atComma = type(hello + ",", composer: &composer)
+    #expect(atComma.committed == "")
+    let next = composer.handle(.character("s"))
+    #expect(next.commit?.hasSuffix("，") == true && (next.commit?.count ?? 0) == 31)
+    #expect(next.marked == "ㄋ")
+    _ = composer.handle(.escape)
+    // 沒有逗號、沒到硬上限：不送出。
+    #expect(type(hello, composer: &composer).committed == "")
+    _ = composer.handle(.escape)
+    // 沒有逗號、超過硬上限：送出前面的，只留最後 longRunTail 個字還能改。
+    var committed = ""
+    var marked = ""
+    for key in String(repeating: "su3cl3", count: 30) {
+        let result = composer.handle(.character(key))
+        committed += result.commit ?? ""
+        marked = result.marked
+    }
+    #expect(!committed.isEmpty)
+    #expect(marked.count <= Composer.longRunHardLimit)
+    #expect(marked.count >= Composer.longRunTail)
+    #expect((committed + marked).count == 60)
+}
+
 @Test func tabAcceptsPredictionFromLexicon() {
     var composer = Composer(segmenter: segmenter)
     // 詞庫裡「不好」最常見的後續是「意思」。
