@@ -48,6 +48,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
                     : "這台電腦沒有可用的內建模型（需要 macOS 26 並開啟 Apple Intelligence）。",
                 \.modelPredictions
             ),
+            ("打太長沒按 Enter 自動送出", "超過 30 字遇到逗號就送出前面的；50 字還沒標點就只留最後一小段。", \.longRunCommit),
             ("自動更新", "每天檢查一次，下載後驗證簽章才安裝。", \.autoUpdate),
         ]
         for (title, description, keyPath) in descriptions {

@@ -117,6 +117,8 @@ public struct Composer: Sendable {
     private var panel: Panel?
     /// 關掉時不提示也不攔 Tab。
     public var predictionsEnabled = true
+    /// 打太長沒按 Enter 時自動送出前面的段落（見 `longRunStop`）。
+    public var longRunCommitEnabled = true
     /// 剛退格刪掉的按鍵，以及之後在同一個位置重打的按鍵。用來學使用者的打錯習慣。
     private var fix: (deleted: [Character], retyped: [Character], position: Int)?
     /// 剛送出、組字區已清空時，送出的那段文字；用來預測接下來的內容。按了任何鍵就失效，
@@ -302,7 +304,7 @@ public struct Composer: Sendable {
     public static let longRunTail = 16
 
     private func longRunStop(_ characters: [Character], _ stops: [(key: Int, offset: Int)]) -> (key: Int, offset: Int)? {
-        guard characters.count >= Self.longRunLimit else { return nil }
+        guard longRunCommitEnabled, characters.count >= Self.longRunLimit else { return nil }
         // 逗號的鍵（, ; ' 也是注音）要等後面又打了一個鍵、仍然顯示成標點，才算數。
         if let stop = stops.last(where: { $0.offset > 0 && $0.key < keys.count && "，、；：".contains(characters[$0.offset - 1]) }) {
             return stop

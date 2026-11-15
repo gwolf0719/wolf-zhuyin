@@ -12,6 +12,8 @@ public struct Preferences: Sendable, Equatable {
     public var predictions = true
     /// 用 macOS 內建的本機模型補充預測（看整句的意思續寫）。預設關閉；模型不可用時沒有作用。
     public var modelPredictions = false
+    /// 組字區打太長沒按 Enter 時，自動把前面的段落送出（遇逗號，或超過字數）。
+    public var longRunCommit = true
     /// 每天自動檢查並安裝新版。
     public var autoUpdate = true
 
@@ -24,6 +26,7 @@ public struct Preferences: Sendable, Equatable {
         public static let learning = "Learning"
         public static let predictions = "Predictions"
         public static let modelPredictions = "ModelPredictions"
+        public static let longRunCommit = "LongRunCommit"
         public static let autoUpdateDisabled = "AutoUpdateDisabled"
     }
 
@@ -40,6 +43,7 @@ public struct Preferences: Sendable, Equatable {
         learning = read(Key.learning, default: true)
         predictions = read(Key.predictions, default: true)
         modelPredictions = read(Key.modelPredictions, default: false)
+        longRunCommit = read(Key.longRunCommit, default: true)
         autoUpdate = !defaults.bool(forKey: Key.autoUpdateDisabled)
     }
 
@@ -49,6 +53,7 @@ public struct Preferences: Sendable, Equatable {
         defaults.set(learning, forKey: Key.learning)
         defaults.set(predictions, forKey: Key.predictions)
         defaults.set(modelPredictions, forKey: Key.modelPredictions)
+        defaults.set(longRunCommit, forKey: Key.longRunCommit)
         defaults.set(!autoUpdate, forKey: Key.autoUpdateDisabled)
     }
 
@@ -100,6 +105,7 @@ public struct Preferences: Sendable, Equatable {
     public func composer(lexicon: Lexicon, stores: Stores?) -> Composer {
         var composer = Composer(segmenter: segmenter(lexicon: lexicon, stores: stores))
         composer.predictionsEnabled = predictions
+        composer.longRunCommitEnabled = longRunCommit
         return composer
     }
 }

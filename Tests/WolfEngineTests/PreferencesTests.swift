@@ -20,6 +20,7 @@ private func type(_ keys: String, _ composer: inout Composer) -> Composer.Result
     changed.typoTolerance = false
     changed.learning = false
     changed.predictions = false
+    changed.longRunCommit = false
     changed.autoUpdate = false
     changed.save(to: defaults)
     #expect(Preferences(defaults: defaults) == changed)
@@ -138,4 +139,14 @@ private func type(_ keys: String, _ composer: inout Composer) -> Composer.Result
     // 一致的留下，先達標的在前；整理過後一樣的也算（標點後面不看、前文重複的去掉）。
     #expect(ModelOutput.agreed(["吃飯", "餐廳", "吃飯，然後回家", "我們一起去餐廳"], after: "我們一起去") == ["吃飯", "餐廳"])
     #expect(ModelOutput.agreed(["很好", "很好", "很不好", "很好"], after: "今天天氣") == ["很好"])
+}
+
+@Test func longRunCommitFollowsPreference() {
+    let keys = String(repeating: "su3cl3", count: 30)
+    var on = Preferences().composer(lexicon: lexicon, stores: nil)
+    #expect(!(keys.map { on.handle(.character($0)).commit }.compactMap { $0 }.isEmpty))
+    var preferences = Preferences()
+    preferences.longRunCommit = false
+    var off = preferences.composer(lexicon: lexicon, stores: nil)
+    #expect(keys.map { off.handle(.character($0)).commit }.compactMap { $0 }.isEmpty)
 }
