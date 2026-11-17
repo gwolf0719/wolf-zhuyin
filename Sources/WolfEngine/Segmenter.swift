@@ -348,6 +348,16 @@ public struct Segmenter: Sendable {
         guard start < cursor else { return [] }
         let span = keys[start..<cursor].map { Self.decodedLiteral($0) ?? Self.punctuationKeys[$0] ?? $0 }[...]
         var result: [Candidate] = []
+        // 最後一個音節還沒打聲調（漏按，或使用者打到一半）：各聲調的字依常見程度一起列出來，選一個就補上聲調。
+        // 空白當一聲的也算在內。使用者常漏按聲調（2026-11-18 的打錯紀錄裡，漏掉的鍵最多是聲調），所以放在最前面。
+        if weights.typoTolerance, span.count <= 3, let symbols = Dachen.symbols(for: span) {
+            let toned = Dachen.tones.values.flatMap { mark in
+                entries(for: symbols + mark).prefix(2).map { (entry: $0, reading: symbols + mark) }
+            }.sorted { $0.entry.score > $1.entry.score }
+            for item in toned.prefix(Self.correctionSlots + 5) where !result.contains(where: { $0.text == item.entry.text }) {
+                result.append(Candidate(text: item.entry.text, start: start, reading: item.reading))
+            }
+        }
         var chinese = self
         chinese.englishEnabled = false
         chinese.correctsAnywhere = true
@@ -918,6 +928,7 @@ extension Segmenter {
         if let exact = Dachen.syllable(in: keys, from: start) { add(exact.reading, exact.end, 0) }
         guard weights.typoTolerance else { return options }
         let habits = typos?.habits ?? []
+        let strayKeys = typos?.strayKeys ?? []
 
         // 使用者自己更正過兩次以上的錯：直接當成他想打的那個音節。
         if let typos {
@@ -976,6 +987,22 @@ extension Segmenter {
             }
         }
 
+        // 3b. 聲調鍵按到隔壁鍵（想按 4 按成 5）：只在使用者習慣犯這種錯時才修。
+        // 打錯的那個鍵本身不是聲調（是的話整個音節本來就成立），換成相鄰的聲調鍵後要剛好結束在那一鍵。
+        if habits.contains(.toneNeighbor) {
+            for offset in 1...3 where start + offset < keys.count {
+                let typed = keys[start + offset]
+                guard !isToneDigit(typed), typed != " " else { continue }
+                for tone in "3467" where Dachen.neighbors[tone]?.contains(typed) == true {
+                    var corrected = keys
+                    corrected[start + offset] = tone
+                    guard let syllable = Dachen.syllable(in: corrected, from: start), syllable.end == start + offset + 1,
+                          hasLetterSymbol(start..<start + offset) else { continue }
+                    add(syllable.reading, syllable.end, weights.typoNeighbor, isStrong: true)
+                }
+            }
+        }
+
         // 4. 多按一鍵：3–5 個鍵、以數字聲調結尾，拿掉其中一個字母鍵就照標準打法成立（urup4 → rup4）。
         // 使用者習慣多按一鍵時，夾著數字或符號鍵、空白當一聲的（yl; ）也修。
         for length in 3...5 where start + length <= keys.count {
@@ -984,12 +1011,13 @@ extension Segmenter {
             let last = keys[range.upperBound - 1]
             guard isToneDigit(last) || (last == " " && hasNonLetterSymbol && habits.contains(.extraKey)),
                   hasLetterSymbol(range) else { continue }
-            // 只拿掉字母鍵：數字鍵可能是真的數字（3個、4點）。
-            for index in range.dropLast() where keys[index].isLetter {
+            // 只拿掉字母鍵：數字鍵可能是真的數字（3個、4點）；使用者自己常誤觸的鍵（數字、空白）例外。
+            for index in range.dropLast() where keys[index].isLetter || strayKeys.contains(keys[index]) {
                 var trimmed = Array(keys[range])
                 trimmed.remove(at: index - start)
                 guard let syllable = Dachen.syllable(in: trimmed, from: 0), syllable.end == trimmed.count else { continue }
-                add(syllable.reading, range.upperBound, weights.typoExtraKey, isStrong: habits.contains(.extraKey))
+                add(syllable.reading, range.upperBound, weights.typoExtraKey,
+                    isStrong: habits.contains(.extraKey) || strayKeys.contains(keys[index]))
             }
         }
 

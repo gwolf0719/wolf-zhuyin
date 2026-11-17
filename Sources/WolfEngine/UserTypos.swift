@@ -5,10 +5,14 @@ import Foundation
 public final class UserTypos: @unchecked Sendable {
     private let lock = NSLock()
     private var corrections: [String: [String: Int]] = [:] {
-        didSet { cachedHabits = Self.habits(in: corrections) }
+        didSet {
+            cachedHabits = Self.habits(in: corrections)
+            cachedStray = Self.strayKeys(in: corrections)
+        }
     }
     /// 每打一個鍵都會查好幾次，所以存起來，紀錄變動時才重算。
     private var cachedHabits: Set<Kind> = []
+    private var cachedStray: Set<Character> = []
     private let file: JSONFile<[String: [String: Int]]>
 
     /// 同一個錯至少更正過這麼多次才自動套用。打錯的按鍵裡有數字聲調鍵（3 4 6 7）時一次就套用：
@@ -19,6 +23,9 @@ public final class UserTypos: @unchecked Sendable {
     /// 某一類打錯（順序顛倒、多按一鍵、漏按一鍵）累計更正這麼多次，就當成使用者的習慣：
     /// 同類的打錯就算沒看過，也不必和旁邊的字成詞就修正。
     public static let habitThreshold = 3
+    /// 同一個鍵被「多按」更正過這麼多次，就當成使用者常誤觸的鍵（數字鍵、空白）：
+    /// 這種鍵平常不拿掉（可能是真的數字），常誤觸的才拿掉。
+    public static let strayThreshold = 2
 
     /// 打錯的類型。
     public enum Kind: Sendable, CaseIterable {
@@ -28,6 +35,8 @@ public final class UserTypos: @unchecked Sendable {
         case extraKey
         /// 少按了一個鍵（ho4 → hjo4）。
         case missingKey
+        /// 聲調鍵按到隔壁鍵（想按 4 按成 5）。
+        case toneNeighbor
     }
     /// 最多記這麼多種打錯的按鍵；超過時丟掉最少發生的。
     public static let maximumEntries = 2000
@@ -38,6 +47,7 @@ public final class UserTypos: @unchecked Sendable {
         corrections = file.load() ?? [:]
         // 初始化時 didSet 不會觸發，要自己算。
         cachedHabits = Self.habits(in: corrections)
+        cachedStray = Self.strayKeys(in: corrections)
     }
 
     /// 只放在記憶體、內容直接給定（評測工具用）。
@@ -45,6 +55,7 @@ public final class UserTypos: @unchecked Sendable {
         file = JSONFile(url: nil)
         self.corrections = corrections
         cachedHabits = Self.habits(in: corrections)
+        cachedStray = Self.strayKeys(in: corrections)
     }
 
     /// 目前所有的更正紀錄。
@@ -88,6 +99,26 @@ public final class UserTypos: @unchecked Sendable {
     /// 使用者習慣犯的打錯類型：同一類累計更正至少 `habitThreshold` 次。
     public var habits: Set<Kind> { lock.withLock { cachedHabits } }
 
+    /// 使用者常多按的鍵（同一個鍵累計多按更正至少 `strayThreshold` 次）。
+    public var strayKeys: Set<Character> { lock.withLock { cachedStray } }
+
+    private static func strayKeys(in corrections: [String: [String: Int]]) -> Set<Character> {
+        var counts: [Character: Int] = [:]
+        for (mistyped, intended) in corrections {
+            let typed = Array(mistyped)
+            for (text, count) in intended where kind(typed, Array(text)) == .extraKey {
+                let target = Array(text)
+                // 多出來的那一個鍵：拿掉後剛好等於想打的。
+                if let index = typed.indices.first(where: { index in
+                    var trimmed = typed
+                    trimmed.remove(at: index)
+                    return trimmed == target
+                }) { counts[typed[index], default: 0] += count }
+            }
+        }
+        return Set(counts.filter { $0.value >= strayThreshold }.keys)
+    }
+
     private static func habits(in corrections: [String: [String: Int]]) -> Set<Kind> {
         var counts: [Kind: Int] = [:]
         for (mistyped, intended) in corrections {
@@ -110,6 +141,11 @@ public final class UserTypos: @unchecked Sendable {
         }
         if dropsOne(mistyped, intended) { return .extraKey }
         if dropsOne(intended, mistyped) { return .missingKey }
+        if mistyped.count == intended.count {
+            let differences = zip(mistyped, intended).filter { $0 != $1 }
+            if differences.count == 1, let (typed, wanted) = differences.first,
+               "3467".contains(wanted), Dachen.neighbors[wanted]?.contains(typed) == true { return .toneNeighbor }
+        }
         return nil
     }
 

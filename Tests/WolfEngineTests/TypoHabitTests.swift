@@ -1,0 +1,50 @@
+import Foundation
+import Testing
+@testable import WolfEngine
+
+private let lexicon = try! Lexicon(contentsOf: URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    .appendingPathComponent("Data/mcbopomofo/data.txt"))
+
+/// 使用者習慣把聲調鍵按到隔壁（想按 4 按成 5）：看過幾次之後，這種錯自動修正。
+@Test func toneKeyNextToIntendedIsCorrectedOnlyForUsersWithTheHabit() {
+    #expect(UserTypos.kind(Array("cl5"), Array("cl4")) == .toneNeighbor)
+    #expect(UserTypos.kind(Array("cl8"), Array("cl4")) == nil)      // 8 不在 4 隔壁
+    #expect(UserTypos.kind(Array("cp4"), Array("cl4")) == nil)      // 不是聲調鍵
+    var plain = Segmenter(lexicon: lexicon)
+    let intended = plain.layout("cl4su3").text
+    #expect(plain.layout("cl5su3").text != intended)
+    plain.typos = UserTypos(corrections: ["ho5": ["ho4": 3]])
+    #expect(plain.typos?.habits.contains(.toneNeighbor) == true)
+    #expect(plain.layout("cl5su3").text == intended)
+    // 沒有這個習慣的人：不修。
+    var other = Segmenter(lexicon: lexicon)
+    other.typos = UserTypos(corrections: [:])
+    #expect(other.layout("cl5su3").text != intended)
+}
+
+/// 常誤觸的鍵（數字、空白）：同一個鍵多按更正兩次以上才算；一次不算，免得把真的數字拿掉。
+@Test func strayKeysNeedRepeatedCorrections() {
+    #expect(UserTypos(corrections: ["1rup4": ["rup4": 1]]).strayKeys.isEmpty)
+    #expect(UserTypos(corrections: ["1rup4": ["rup4": 2]]).strayKeys == ["1"])
+    #expect(UserTypos(corrections: ["1rup4": ["rup4": 1], "1cl3": ["cl3": 1]]).strayKeys == ["1"])
+    // 順序顛倒、漏按不算多按。
+    #expect(UserTypos(corrections: ["ru4p": ["rup4": 5], "rp4": ["rup4": 5]]).strayKeys.isEmpty)
+    // 常誤觸的數字鍵在選字窗裡能拿掉：1rup4 → rup4 的字。
+    var seg = Segmenter(lexicon: lexicon)
+    seg.typos = UserTypos(corrections: ["1su3": ["su3": 2]])
+    let wanted = seg.layout("su3").text
+    #expect(seg.candidates("1su3").contains { $0.text == wanted })
+}
+
+/// 最後一個音節還沒打聲調：選字窗把各聲調的字一起列出來，選一個就補上聲調。
+@Test func toneLessLastSyllableOffersEveryTone() {
+    var composer = Composer(segmenter: Segmenter(lexicon: lexicon))
+    for key in "ji3su" { _ = composer.handle(.character(key)) }
+    let panel = composer.handle(.down)
+    #expect(panel.candidates.contains("你"))      // ㄋㄧˇ
+    #expect(panel.candidates.contains("泥") || panel.candidates.contains("呢"))  // 其他聲調
+    let index = panel.candidates.firstIndex(of: "你")!
+    #expect(index < 9)
+    #expect(composer.handle(.character(Character("\(index + 1)"))).marked == "我你")
+}
