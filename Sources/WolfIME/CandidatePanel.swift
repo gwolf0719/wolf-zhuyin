@@ -86,7 +86,9 @@ private final class CandidateRow: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = 5
-        layer?.backgroundColor = isHighlighted ? NSColor.selectedContentBackgroundColor.cgColor : nil
+        // 專案配色只有黑、灰、白（使用者 2026-11-18）：反白不跟系統強調色（藍色），用中性灰。
+        let isDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        layer?.backgroundColor = isHighlighted ? NSColor(white: isDark ? 0.42 : 0.25, alpha: 1).cgColor : nil
 
         let numberLabel = NSTextField(labelWithString: label)
         numberLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
