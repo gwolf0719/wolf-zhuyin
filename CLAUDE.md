@@ -20,7 +20,7 @@ macOS 專用注音輸入法（大千鍵盤）：自動中英切換、整句選�
   - 終端機會印 `error messaging the mach port for IMKCFRunLoopWakeUpReliable`，是雜訊，不代表失敗。
   - 系統給輸入模式的識別碼是 `tw.foso.inputmethod.WolfZhuyin.WolfZhuyin.Zhuyin`（中間多一段 bundle 名稱），不是 Info.plist 裡寫的 key。
 - 除錯紀錄：`touch ~/Library/Logs/WolfZhuyin.debug` 後，伺服器會寫 `~/Library/Logs/WolfZhuyin.log`（啟動、連線到哪個 app、每次按鍵有沒有被處理；不含按鍵內容）。開關隨時生效，不必重啟輸入法；刪掉該檔即關閉。
-- 圖示：母圖 `App/Icon/menu-icon-master.png` 由 Codex `image_gen` 產生；`make icon` 用程式去掉白角並縮成選單列用的 tiff（衍生版本須與母圖一致，所以不重新生圖）。
+- 圖示：母圖 `App/Icon/menu-icon-master.png` 原由 Codex `image_gen` 產生（深綠＋奶油），2026-11-18 依「專案只用黑灰白」改成純灰階：用程式把明度對應到 #111111～#FFFFFF，形狀逐點不變（所以不重新生圖）；`make icon` 去掉白角並縮成選單列用的 tiff。
 - `make eval`：印出評測集每一句的錯誤與正確率。
 - `Eval/dev.txt` 可以看錯誤來調參；`Eval/test.txt` 是保留集，只回報數字，不針對它調。
 
