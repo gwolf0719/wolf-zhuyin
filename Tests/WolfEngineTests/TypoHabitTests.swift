@@ -48,3 +48,17 @@ private let lexicon = try! Lexicon(contentsOf: URL(fileURLWithPath: #filePath)
     #expect(index < 9)
     #expect(composer.handle(.character(Character("\(index + 1)"))).marked == "我你")
 }
+
+/// 有「聲調按到隔壁」習慣的人，打 email／網址的字母尾巴（.tw、.vue）不能被當成聲調改掉。
+/// w 是 3 的隔壁鍵，tw 曾被改成 t3＝尺，連前面的 . 也變成「。」。字母鍵的修正只留在 ↓ 候選。
+@Test func letterNeighborOfToneKeyDoesNotOverrideEnglish() {
+    var seg = Segmenter(lexicon: lexicon)
+    seg.typos = UserTypos(corrections: ["ho5": ["ho4": 3]])
+    #expect(seg.typos?.habits.contains(.toneNeighbor) == true)
+    for typed in ["james@foso.tw", "www.abc.tw", "app.vue", "web.de", "tw"] {
+        #expect(seg.layout(typed).text == typed)
+    }
+    #expect(seg.candidates("tw").contains { $0.text == "尺" })
+    // 數字列的隔壁鍵照樣自動修。
+    #expect(seg.layout("cl5su3").text == Segmenter(lexicon: lexicon).layout("cl4su3").text)
+}

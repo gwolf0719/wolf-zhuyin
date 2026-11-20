@@ -998,7 +998,9 @@ extension Segmenter {
                     corrected[start + offset] = tone
                     guard let syllable = Dachen.syllable(in: corrected, from: start), syllable.end == start + offset + 1,
                           hasLetterSymbol(start..<start + offset) else { continue }
-                    add(syllable.reading, syllable.end, weights.typoNeighbor, isStrong: true)
+                    // 只有打錯的鍵是數字列（5 按成 4 的隔壁）才自動修；字母鍵（w e r…）太像英文
+                    // （.tw、.vue、.de），只放進 ↓ 候選，不蓋掉照打的英文。
+                    add(syllable.reading, syllable.end, weights.typoNeighbor, isStrong: typed.isNumber)
                 }
             }
         }
