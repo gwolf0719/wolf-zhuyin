@@ -1113,3 +1113,27 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     let output = "接續：好，適合出去走走\n開会\n今天天氣很不錯\n（1）這是編號\n很好\n好"
     #expect(ModelOutput.predictions(from: output, after: "今天天氣很", limit: 5, isKnown: known) == ["好", "不錯", "很好"])
 }
+
+/// ↓ 是給網頁下拉選單用的情境：完全沒候選就直接交還；選字窗裡沒有中文字時，第二下 ↓ 交還；有中文可選就照常。
+@Test func downArrowPassesThroughWhenNothingToChoose() {
+    var plain = Composer(segmenter: segmenter)
+    for key in "iPhone15".map(Composer.Key.character) { _ = plain.handle(key) }
+    let direct = plain.handle(.down)
+    #expect(direct.handled == false)
+    #expect(direct.commit == "iPhone15")
+
+    var english = Composer(segmenter: segmenter)
+    for key in "hello".map(Composer.Key.character) { _ = english.handle(key) }
+    #expect(english.handle(.down).candidates.isEmpty == false)   // 第一下仍可以選注音符號
+    let passed = english.handle(.down)
+    #expect(passed.handled == false)
+    #expect(passed.commit == "hello")
+    #expect(passed.marked.isEmpty)
+
+    var chinese = Composer(segmenter: segmenter)
+    for key in "su3cl3".map(Composer.Key.character) { _ = chinese.handle(key) }
+    _ = chinese.handle(.down)
+    let moved = chinese.handle(.down)
+    #expect(moved.handled)
+    #expect(moved.highlighted == 1)
+}

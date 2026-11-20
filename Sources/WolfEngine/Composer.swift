@@ -485,6 +485,8 @@ public struct Composer: Sendable {
         case .down:
             guard !keys.isEmpty else { return Result(handled: false) }
             let candidates = segmenter.candidates(String(keys), cursor: cursor, afterChinese: afterChinese, readings: readings)
+            // 完全沒有候選（純英文、數字）：這個 ↓ 不是要選字，多半是在表單裡要選網頁的下拉選單，交還給 app。
+            guard !candidates.isEmpty else { return commit(text(of: keys), handled: false) }
             if !candidates.isEmpty {
                 panel = Panel(items: candidates.map {
                     Item(text: $0.text, start: $0.start, reading: $0.reading, inserted: $0.inserted)
@@ -568,6 +570,11 @@ public struct Composer: Sendable {
         case .enter, .character(" "), .tab:
             chosen = current.items[current.highlighted]
         case .down:
+            // 選字窗裡一個中文字都沒有（只有英文照打、注音符號）：再按一次 ↓ 是要給網頁的下拉選單，
+            // 不是在候選間移動。照原樣送出組字區，把 ↓ 交還 app。
+            if !current.isSymbols, !current.isWrap, current.items.allSatisfy({ $0.reading == nil && $0.separator.isEmpty }) {
+                return commit(text(of: keys), handled: false)
+            }
             current.highlighted = min(current.highlighted + 1, current.items.count - 1)
         case .up:
             current.highlighted = max(current.highlighted - 1, 0)
