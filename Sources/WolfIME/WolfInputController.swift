@@ -12,6 +12,10 @@ final class WolfInputController: IMKInputController {
     private static let predictionLifetime: TimeInterval = 8
     private var predictionExpiry: DispatchWorkItem?
     private var composerIsIdle = true
+    private var englishCommit: DispatchWorkItem?
+    private var englishPassThrough = true
+    /// 純英文停頓這麼久，就先寫進輸入框。
+    private static let englishPause: TimeInterval = 0.8
     /// 用本機模型補充預測（設定裡的開關，而且模型可用）。
     private var usesModelPredictions = false
     /// 最近送出的文字，給模型當前文。換視窗、點滑鼠就清掉，因為游標可能已經不在原處。
@@ -51,6 +55,7 @@ final class WolfInputController: IMKInputController {
         commitComposition(client)
         let preferences = Preferences(defaults: .standard)
         composer = preferences.composer(lexicon: sharedLexicon, stores: sharedStores)
+        englishPassThrough = preferences.englishPassThrough
         usesModelPredictions = preferences.predictions && preferences.modelPredictions && ModelPredictor.isAvailable
     }
 
@@ -112,6 +117,26 @@ final class WolfInputController: IMKInputController {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.predictionLifetime, execute: expiry)
     }
 
+    /// 組字區只有英文、數字且停下來：先寫進輸入框（網頁的自動推薦要看到文字才會出現）。
+    private func scheduleEnglishCommit() {
+        englishCommit?.cancel()
+        englishCommit = nil
+        guard englishPassThrough, !composerIsIdle else { return }
+        let work = DispatchWorkItem { [weak self] in self?.commitEnglishNow() }
+        englishCommit = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.englishPause, execute: work)
+    }
+
+    private func commitEnglishNow() {
+        englishCommit = nil
+        guard let client = client() as? IMKTextInput, let text = composer.commitPlainEnglish()?.commit else { return }
+        debugLog("停頓後先寫入純英文")
+        client.insertText(text, replacementRange: Self.noReplacement)
+        recentCommitted = String((recentCommitted + text).suffix(ModelPredictor.contextLength))
+        composerIsIdle = true
+        CandidatePanel.shared.hide()
+    }
+
     private func dismissPrediction() {
         modelRequest?.cancel()
         modelRequest = nil
@@ -169,6 +194,7 @@ final class WolfInputController: IMKInputController {
         }
         lastCursorRect = Self.cursorRect(in: client, at: cursorLocation)
         requestModelPrediction()
+        scheduleEnglishCommit()
         return result.handled
     }
 
@@ -218,6 +244,8 @@ final class WolfInputController: IMKInputController {
     override func deactivateServer(_ sender: Any!) {
         debugLog("deactivateServer app=\((sender as? IMKTextInput)?.bundleIdentifier() ?? "?")")
         recentCommitted = ""
+        englishCommit?.cancel()
+        englishCommit = nil
         composer.forgetCommit()
         dismissPrediction()
         super.deactivateServer(sender)

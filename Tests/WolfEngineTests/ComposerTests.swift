@@ -1137,3 +1137,35 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     #expect(moved.handled)
     #expect(moved.highlighted == 1)
 }
+
+/// 網頁有自動推薦的表單：純英文時 Enter／Esc 先把文字寫進去再交給網頁；停頓後也能先寫入。有中文就照常。
+@Test func plainEnglishPassesEnterAndEscapeToApp() {
+    for key in [Composer.Key.enter, .escape] {
+        var composer = Composer(segmenter: segmenter)
+        for ch in "james@foso.tw".map(Composer.Key.character) { _ = composer.handle(ch) }
+        let result = composer.handle(key)
+        #expect(result.handled == false)
+        #expect(result.commit == "james@foso.tw")
+        #expect(result.marked.isEmpty)
+    }
+    var pause = Composer(segmenter: segmenter)
+    for ch in "hello".map(Composer.Key.character) { _ = pause.handle(ch) }
+    #expect(pause.plainEnglishText == "hello")
+    #expect(pause.commitPlainEnglish()?.commit == "hello")
+    #expect(pause.plainEnglishText == nil)
+
+    // 有中文：Enter 吃掉按鍵、Esc 清空，行為不變。
+    var chinese = Composer(segmenter: segmenter)
+    for ch in "su3cl3".map(Composer.Key.character) { _ = chinese.handle(ch) }
+    #expect(chinese.plainEnglishText == nil)
+    #expect(chinese.commitPlainEnglish() == nil)
+    let sent = chinese.handle(.enter)
+    #expect(sent.handled)
+    #expect(sent.commit == "你好")
+
+    // 設定關掉就是原本的行為。
+    var off = Composer(segmenter: segmenter)
+    off.englishPassThroughEnabled = false
+    for ch in "hello".map(Composer.Key.character) { _ = off.handle(ch) }
+    #expect(off.handle(.enter).handled)
+}

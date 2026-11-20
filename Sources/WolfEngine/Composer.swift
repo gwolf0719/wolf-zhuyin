@@ -119,6 +119,21 @@ public struct Composer: Sendable {
     public var predictionsEnabled = true
     /// 打太長沒按 Enter 時自動送出前面的段落（見 `longRunStop`）。
     public var longRunCommitEnabled = true
+    /// 組字區只有照打的英文、數字時，Enter／Esc／↓ 交還 app，停頓後也由外殼先寫進輸入框。
+    public var englishPassThroughEnabled = true
+
+    /// 組字區目前整串都是照打的英文、數字（游標在結尾、沒開選字窗）才有值；其他情況是 nil。
+    public var plainEnglishText: String? {
+        guard englishPassThroughEnabled, !keys.isEmpty, cursor == keys.count, panel == nil else { return nil }
+        let typed = String(keys)
+        return segmenter.layout(typed, afterChinese: afterChinese).text == typed ? typed : nil
+    }
+
+    /// 停頓之後由外殼呼叫：純英文就先送出（不吃按鍵），網頁才看得到文字、跳出自動推薦。
+    public mutating func commitPlainEnglish() -> Result? {
+        guard let text = plainEnglishText else { return nil }
+        return commit(text)
+    }
     /// 剛退格刪掉的按鍵，以及之後在同一個位置重打的按鍵。用來學使用者的打錯習慣。
     private var fix: (deleted: [Character], retyped: [Character], position: Int)?
     /// 剛送出、組字區已清空時，送出的那段文字；用來預測接下來的內容。按了任何鍵就失效，
@@ -456,6 +471,8 @@ public struct Composer: Sendable {
             return Result(handled: false, commit: text)
         case .enter:
             guard !keys.isEmpty else { return Result(handled: false) }
+            // 純英文：先寫進去，Enter 交給 app（表單送出、選推薦），不必按兩次。
+            if let english = plainEnglishText { return commit(english, handled: false) }
             return commit(text(of: keys))
         case .backspace:
             guard !keys.isEmpty else { return Result(handled: false) }
@@ -479,6 +496,8 @@ public struct Composer: Sendable {
             return state()
         case .escape:
             guard !keys.isEmpty else { return Result(handled: false) }
+            // 純英文：文字留下，Esc 交給 app（收掉網頁的推薦），不把剛打的整段清掉。
+            if let english = plainEnglishText { return commit(english, handled: false) }
             keys = []
             cursor = 0
             return state()

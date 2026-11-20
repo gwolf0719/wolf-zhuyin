@@ -14,6 +14,8 @@ public struct Preferences: Sendable, Equatable {
     public var modelPredictions = false
     /// 組字區打太長沒按 Enter 時，自動把前面的段落送出（遇逗號，或超過字數）。
     public var longRunCommit = true
+    /// 純英文、數字的組字：停頓一下就先寫進輸入框，Enter／Esc／↓ 也交給 app（網頁的自動推薦才出得來）。
+    public var englishPassThrough = true
     /// 每天自動檢查並安裝新版。
     public var autoUpdate = true
 
@@ -27,6 +29,7 @@ public struct Preferences: Sendable, Equatable {
         public static let predictions = "Predictions"
         public static let modelPredictions = "ModelPredictions"
         public static let longRunCommit = "LongRunCommit"
+        public static let englishPassThrough = "EnglishPassThrough"
         public static let autoUpdateDisabled = "AutoUpdateDisabled"
     }
 
@@ -44,6 +47,7 @@ public struct Preferences: Sendable, Equatable {
         predictions = read(Key.predictions, default: true)
         modelPredictions = read(Key.modelPredictions, default: false)
         longRunCommit = read(Key.longRunCommit, default: true)
+        englishPassThrough = read(Key.englishPassThrough, default: true)
         autoUpdate = !defaults.bool(forKey: Key.autoUpdateDisabled)
     }
 
@@ -54,6 +58,7 @@ public struct Preferences: Sendable, Equatable {
         defaults.set(predictions, forKey: Key.predictions)
         defaults.set(modelPredictions, forKey: Key.modelPredictions)
         defaults.set(longRunCommit, forKey: Key.longRunCommit)
+        defaults.set(englishPassThrough, forKey: Key.englishPassThrough)
         defaults.set(!autoUpdate, forKey: Key.autoUpdateDisabled)
     }
 
@@ -106,6 +111,7 @@ public struct Preferences: Sendable, Equatable {
         var composer = Composer(segmenter: segmenter(lexicon: lexicon, stores: stores))
         composer.predictionsEnabled = predictions
         composer.longRunCommitEnabled = longRunCommit
+        composer.englishPassThroughEnabled = englishPassThrough
         return composer
     }
 }

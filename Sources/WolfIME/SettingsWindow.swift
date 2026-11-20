@@ -49,6 +49,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
                 \.modelPredictions
             ),
             ("打太長沒按 Enter 自動送出", "超過 30 字遇到逗號就送出前面的；50 字還沒標點就只留最後一小段。", \.longRunCommit),
+            ("英文直接交給網頁", "純英文、數字停頓一下就寫進輸入框，Enter、Esc、↓ 也交給網頁，自動推薦才出得來。", \.englishPassThrough),
             ("自動更新", "每天檢查一次，下載後驗證簽章才安裝。", \.autoUpdate),
         ]
         for (title, description, keyPath) in descriptions {

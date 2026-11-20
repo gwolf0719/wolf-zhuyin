@@ -21,6 +21,7 @@ private func type(_ keys: String, _ composer: inout Composer) -> Composer.Result
     changed.learning = false
     changed.predictions = false
     changed.longRunCommit = false
+    changed.englishPassThrough = false
     changed.autoUpdate = false
     changed.save(to: defaults)
     #expect(Preferences(defaults: defaults) == changed)
