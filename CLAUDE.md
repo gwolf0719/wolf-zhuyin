@@ -25,7 +25,7 @@ macOS 專用注音輸入法（大千鍵盤）：自動中英切換、整句選�
 - `Eval/dev.txt` 可以看錯誤來調參；`Eval/test.txt` 是保留集，只回報數字，不針對它調。
 
 ## 派工
-- 可規格化的外殼 UI 派 agy、獨立審查派 Codex；引擎演算法自己做。流程、指令、驗收：`docs/dispatch_protocol.md`；實作者經驗：`docs/agent_lessons.md`；實作者入口：`AGENTS.md`。
+- 可規格化的外殼 UI 與獨立審查都派 Codex；引擎演算法自己做。流程、指令、驗收：`docs/dispatch_protocol.md`；實作者經驗：`docs/agent_lessons.md`；實作者入口：`AGENTS.md`。
 
 ## 部署
 - 公開專案：https://github.com/gwolf0719/wolf-zhuyin （MIT）。
