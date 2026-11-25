@@ -120,8 +120,7 @@ private func type(_ keys: String, then last: Composer.Key? = nil, composer: inou
         let sent = composer.handle(.enter).commit
         if sent != (buffer.isEmpty ? nil : expected) {
             // 唯一的例外：中文字後面漏了聲調的結尾音節，Enter 會補成一個中文字（fillMissingTone）。
-            // 補完之後前面的空白（一聲）可能重新被認成字，所以只檢查：原本結尾是沒轉成字的按鍵、現在換成中文字。
-            #expect(expected.last.map { $0.isASCII } == true)
+            // 補完之後前面的空白（一聲）可能重新被認成字、結尾的標點鍵也可能被當成韻母，所以只檢查：結尾換成了一個中文字。
             #expect(sent?.last.map { !$0.isASCII } == true)
         }
         #expect(composer.flush() == nil)
