@@ -1,6 +1,8 @@
 # 這台機器只有 Command Line Tools（沒有 Xcode），swift test 要自己指到內附的 Testing 框架。
 CLT := /Library/Developer/CommandLineTools/Library/Developer
-TEST_FLAGS := -Xswiftc -F -Xswiftc $(CLT)/Frameworks -Xlinker -F -Xlinker $(CLT)/Frameworks \
+# Swift 6.4 之後 @Test 巨集的外掛不在預設搜尋路徑，要自己指（找不到會噴 TestingMacros not found）。
+PLUGINS := /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing
+TEST_FLAGS := -Xswiftc -plugin-path -Xswiftc $(PLUGINS) -Xswiftc -F -Xswiftc $(CLT)/Frameworks -Xlinker -F -Xlinker $(CLT)/Frameworks \
 	-Xlinker -rpath -Xlinker $(CLT)/Frameworks -Xlinker -rpath -Xlinker $(CLT)/usr/lib
 
 .PHONY: test eval install e2e icon personal
