@@ -62,3 +62,27 @@ private let lexicon = try! Lexicon(contentsOf: URL(fileURLWithPath: #filePath)
     // 數字列的隔壁鍵照樣自動修。
     #expect(seg.layout("cl5su3").text == Segmenter(lexicon: lexicon).layout("cl4su3").text)
 }
+
+/// 打完最後一個音節忘了聲調就按 Enter：補成最常用的聲調的字，不把注音符號送出去；自動修正關掉就照舊。
+@Test func enterFillsMissingToneOfLastSyllable() {
+    var composer = Composer(segmenter: Segmenter(lexicon: lexicon))
+    for key in "ji3su" { _ = composer.handle(.character(key)) }
+    #expect(composer.handle(.enter).commit == "我你")
+
+    var off = Segmenter(lexicon: lexicon)
+    off.weights.typoTolerance = false
+    var plain = Composer(segmenter: off)
+    for key in "ji3su" { _ = plain.handle(.character(key)) }
+    #expect(plain.handle(.enter).commit == "我su")
+
+    // 整串都有聲調、或是英文（go 不是打到一半的注音），Enter 不動它。
+    var done = Composer(segmenter: Segmenter(lexicon: lexicon))
+    for key in "ji3su3" { _ = done.handle(.character(key)) }
+    #expect(done.handle(.enter).commit == "我你")
+}
+
+@Test func enterLeavesEnglishTailAlone() {
+    var composer = Composer(segmenter: Segmenter(lexicon: lexicon))
+    for key in "ji3go" { _ = composer.handle(.character(key)) }
+    #expect(composer.handle(.enter).commit == "我go")
+}

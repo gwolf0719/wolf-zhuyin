@@ -371,6 +371,25 @@ public struct Composer: Sendable {
         fix = nil
     }
 
+    /// 送出時結尾還有一個沒打聲調的音節（顯示成裸的注音符號）：補成最常用的聲調的字，而不是把注音符號送出去。
+    /// 漏按聲調是打錯紀錄裡最常漏的鍵；這個字不記成使用者的選字，打錯的自動修正關掉時也不補。
+    private mutating func fillMissingTone() {
+        guard segmenter.weights.typoTolerance, cursor == keys.count, panel == nil,
+              let last = segmenter.layout(String(keys), afterChinese: afterChinese).text.last,
+              ("\u{3105}"..."\u{3129}").contains(last) else { return }
+        let candidates = segmenter.candidates(String(keys), cursor: cursor, afterChinese: afterChinese, readings: readings)
+        // 第一個候選必須是「同一串注音符號加上聲調」的單字，才是在補聲調（不是整段轉中文）。
+        // 被取代的整段必須全是聲母／介音／韻母的鍵（不含聲調鍵、空白），而且讀音正好是這些符號再加一個聲調。
+        guard let first = candidates.first, let reading = first.reading, first.text.count == 1,
+              keys[first.start...].allSatisfy({ Dachen.tones[$0] == nil }),
+              let symbols = Dachen.symbolsByKey(keys[first.start...]),
+              reading.hasPrefix(symbols), reading.count - symbols.count <= 1 else { return }
+        // 只在前面緊接著中文字時才補（我ㄋㄧ）；單獨一串字母或英文字（go、so）可能就是要打英文，照原樣送出。
+        guard first.start > 0, let before = text(of: keys[..<first.start]).last, !before.isASCII,
+              segmenter.english.tier(of: String(keys[first.start...])) == nil else { return }
+        apply(Item(text: first.text, start: first.start, reading: reading, inserted: first.inserted))
+    }
+
     /// 把送出的內容記進用詞紀錄。
     private mutating func record(_ committedKeys: String) {
         defer { reopenedKeys = nil }
@@ -473,6 +492,7 @@ public struct Composer: Sendable {
             guard !keys.isEmpty else { return Result(handled: false) }
             // 純英文：先寫進去，Enter 交給 app（表單送出、選推薦），不必按兩次。
             if let english = plainEnglishText { return commit(english, handled: false) }
+            fillMissingTone()
             return commit(text(of: keys))
         case .backspace:
             guard !keys.isEmpty else { return Result(handled: false) }
