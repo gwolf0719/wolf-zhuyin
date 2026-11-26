@@ -249,7 +249,8 @@ public struct Segmenter: Sendable {
         }
         var result = candidates(keys, cursor: cursor, run: run, last: last)
         // 結尾的聲調錯置已經自動換掉（片）：照打的解讀（譬0、是9）排第二個，選得回來。
-        if cursor == keys.count, let piece = all.last, piece.isToneSwap {
+        if cursor == keys.count, cursor >= 2, Self.swappableFinalKeys.contains(keys[cursor - 1]), "3467".contains(keys[cursor - 2]),
+           let piece = all.last, piece.reading != nil, weights.typoTolerance {
             var strict = self
             strict.weights.typoTolerance = false
             let raw = strict.pieces(keys, afterChinese: afterChinese, showPending: false).filter { $0.keys.lowerBound >= piece.keys.lowerBound }
@@ -640,7 +641,10 @@ public struct Segmenter: Sendable {
         // 結尾的韻母鍵也會被當成打到一半的音節（ㄢ）；能換成聲調錯置的更正時，組字區和送出一樣顯示更正後的字。
         if showPending, keys.count >= 2, Self.swappableFinalKeys.contains(keys[keys.count - 1]), "3467".contains(keys[keys.count - 2]) {
             let swapped = swappingTrailingTone(keys, resolve(bestPath(keys), afterChinese: afterChinese))
-            if swapped.last?.isToneSwap == true { return swapped }
+            if let last = swapped.last, last.isToneSwap { return swapped }
+            // 有順序顛倒的習慣時，整段轉換本身就把韻母鍵併進前一個字（qu40 → 片），也照那樣顯示。
+            if let last = swapped.last, last.reading != nil, last.syllableEnds.last == keys.count,
+               keys.count - (last.syllableEnds.dropLast().last ?? last.keys.lowerBound) >= 2 { return swapped }
         }
         if showPending, let pending = pendingSyllable(in: keys) {
             // 結尾是打到一半的音節：前面的部分單獨轉換（不讓還沒打完的按鍵影響前面的判斷），結尾顯示注音符號。
@@ -654,12 +658,16 @@ public struct Segmenter: Sendable {
     /// 結尾的韻母鍵（數字 8 9 0 -、/）緊接在聲調後面、本身沒成字時，多半是聲調按早了（qu40 想打「片」）：
     /// 直接換成更正的字詞，照打的解讀（譬0）放在選字窗第二個。使用者 2026-11-26 要求：明明有推薦就直接換上。
     /// 只看最後一個鍵：後面再打字（是9點）時照打。逗號、句號、分號是標點，不換。
+    /// 常接在數字後面的字：前面的數字是真的數字，不當成按早的韻母。
+    private static let numberUnits: Set<Character> = Set("點個歲號年月日元塊次分秒天位件本張台樓層週周倍成折人隻條")
+
     private static let swappableFinalKeys: Set<Character> = ["8", "9", "0", "-", "/"]
 
     private func swappingTrailingTone(_ keys: [Character], _ result: [Piece]) -> [Piece] {
         guard weights.typoTolerance, !correctsAnywhere, let lastKey = keys.last, Self.swappableFinalKeys.contains(lastKey),
-              let tail = result.last, tail.isRawKey, tail.keys == keys.count - 1..<keys.count else { return result }
-        let runs = Self.runs(of: result)
+              let tail = result.last, tail.keys == keys.count - 1..<keys.count else { return result }
+        // 結尾那個鍵可能原樣輸出（0），也可能被當成漏打聲調的音節（ㄢ，有漏打聲調習慣時）；兩種都換。
+        let runs = Self.runs(of: Array(result.dropLast()) + [Piece(language: .english, keys: tail.keys, text: "", isRawKey: true)])
         let syllables = runs.flatMap { $0 }
         for candidate in toneBeforeFinal(keys, cursor: keys.count, runs: runs) {
             guard let reading = candidate.reading,
@@ -689,7 +697,13 @@ public struct Segmenter: Sendable {
             if edge.reading != nil, UserHistory.hasBopomofo(edge.text) { return true }
             guard edge.isRawKey else { return false }
             let key = keys[edge.start]
-            return key.isASCIILetter || ("3467".contains(key) && edge.start > 0 && keys[edge.start - 1].isASCIILetter)
+            if key.isASCIILetter || ("3467".contains(key) && edge.start > 0 && keys[edge.start - 1].isASCIILetter) { return true }
+            // 中文字的聲調後面落單的韻母鍵（qu40 的 0）：多半是聲調按早了。
+            return Self.swappableFinalKeys.contains(key) && edge.start >= 2 && "3467".contains(keys[edge.start - 1])
+                && path.contains { $0.end == edge.start && $0.reading != nil }
+                // 後面接數字或單位（是9點、第8個、890）時是在打數字。
+                && !(edge.end < keys.count && keys[edge.end].isASCIIDigit)
+                && !path.contains { $0.start == edge.end && $0.text.first.map(Self.numberUnits.contains) == true }
         }.map(\.start))
         return unexplained.isEmpty ? path : bestPath(keys, unexplained: unexplained)
     }

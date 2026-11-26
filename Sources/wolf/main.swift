@@ -9,6 +9,7 @@ let usage = """
   wolf steps <文字>     一鍵一鍵打，印出每一步組字區的樣子
   wolf stability <檔案>... 列出打字途中中英被改判的句子
   wolf personal [-v]    用本機的學習紀錄評測（打錯還原率、常用詞組轉換）
+  wolf ptype <按鍵>...  和 type 一樣，但套上本機學習紀錄（輸入法實際的結果），並列出 ↓ 前三個候選
   wolf bench <檔案>...  一鍵一鍵打評測句，量每一鍵轉換要多久（接上本機學習紀錄，只讀不寫）
 詞庫路徑預設 Data/mcbopomofo/data.txt，可用環境變數 WOLF_LEXICON 覆蓋。
 """
@@ -208,14 +209,18 @@ case "stability":
     }
     print("----\n句數 \(total)，打字途中有改判的 \(unstable) 句")
 
+case "ptype":
+    // 和 type 一樣，但套上這台電腦的學習紀錄（輸入法實際用的），並列出 ↓ 的前幾個候選。紀錄只讀。
+    let personal = personalSegmenter()
+    for keys in arguments.dropFirst() {
+        let text = personal.segment(keys, showPending: true).map(\.text).joined() + "／送出 " + personal.segment(keys).map(\.text).joined()
+        let top = personal.candidates(keys).prefix(3).map(\.text).joined(separator: " ")
+        print("\(keys) → \(text)　↓ \(top)")
+    }
+
 case "bench":
     // 量打字反應速度：每打一鍵，外殼都要重新轉換整段組字區。學習紀錄只讀，不會寫回。
-    let directory = ProcessInfo.processInfo.environment["WOLF_DATA"].map { URL(fileURLWithPath: $0) }
-        ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/WolfZhuyin")
-    var personal = segmenter
-    personal.userPhrases = UserPhrases(fileURL: directory.appendingPathComponent("user-phrases.json"))
-    personal.history = UserHistory(fileURL: directory.appendingPathComponent("history.json"))
-    personal.typos = UserTypos(corrections: UserTypos(fileURL: directory.appendingPathComponent("typos.json")).all)
+    let personal = personalSegmenter()
     var timings: [(seconds: Double, length: Int)] = []
     for path in arguments.dropFirst() {
         guard let content = try? String(contentsOfFile: path, encoding: .utf8) else { exit(1) }
@@ -244,4 +249,15 @@ case "bench":
 default:
     print(usage)
     exit(2)
+}
+
+/// 套上這台電腦學習紀錄的轉換器（只讀，不會寫回）。WOLF_DATA 可指定別的資料夾。
+@MainActor func personalSegmenter() -> Segmenter {
+    let directory = ProcessInfo.processInfo.environment["WOLF_DATA"].map { URL(fileURLWithPath: $0) }
+        ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/WolfZhuyin")
+    var personal = segmenter
+    personal.userPhrases = UserPhrases(fileURL: directory.appendingPathComponent("user-phrases.json"))
+    personal.history = UserHistory(fileURL: directory.appendingPathComponent("history.json"))
+    personal.typos = UserTypos(corrections: UserTypos(fileURL: directory.appendingPathComponent("typos.json")).all)
+    return personal
 }

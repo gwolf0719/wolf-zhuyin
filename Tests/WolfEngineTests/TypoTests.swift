@@ -179,11 +179,11 @@ func typoKindClassification(mistyped: String, intended: String, kind: UserTypos.
     #expect(text("ho4bji4") == "脆弱")
 }
 
-/// 打得出正確注音的照打，不自動修正（夾數字的也一樣：自9 是正確的解讀）。修正改由選字窗提供。
+/// 打得出正確注音的照打，不自動修正。修正改由選字窗提供。
+/// 例外（使用者 2026-11-27 要求「有推薦就採用」）：聲調後面落單的韻母數字（我自9家 → 我在家），見下面的測試。
 @Test func validInputIsNeverAutoCorrected() {
     #expect(text("vu.3") == "朽")
     #expect(text("vu,4vu7,") == "謝西，")  // 西＋逗號是正確的解讀
-    #expect(text("ji3y49ru8 ") == "我自9家")
     #expect(text("ji32u/4xk75ek41u042; ") == "我定了5個便當")
     // 有使用者習慣時也一樣。
     var personal = segmenter
@@ -222,11 +222,42 @@ func trailingToneBeforeFinalIsSwapped(typed: String, expected: String, raw: Stri
     #expect(segmenter.candidates(typed).prefix(2).map(\.text) == [expected, raw])
 }
 
-/// 只換結尾：後面還有字（是9點、我自9家）、或結尾是標點（是。）都照打。
-@Test func toneBeforeFinalInTheMiddleOrPunctuationIsKept() {
-    #expect(text("ji3y49ru8 ") == "我自9家")
+/// 句中的也換（我自9家 → 我在家）；後面接數字或單位（是9點、共8個）、或是標點（是。）照打。
+@Test func toneBeforeFinalInTheMiddle() {
+    #expect(text("ji3y49ru8 ") == "我在家")
+    #expect(text("u/3qu40ji3") == "影片我")
+    #expect(text("g492u03") == "是9點")
+    #expect(text("ej/48ek7") == "共8個")
     #expect(text("ji3g4.") == "我是。")
     #expect(text("vu,4vu7,") == "謝西，")
+}
+
+/// 有順序顛倒習慣時，整串都沒認出來的單字也採用推薦（jci4 → 或）；沒有習慣時要成詞才修。v3、x86 這類照打。
+@Test func reorderedSingleCharacterIsCorrected() {
+    var personal = segmenter
+    personal.typos = UserTypos(corrections: ["ke6": ["ek6": 1], "ux;3": ["xu;3": 1], "uv84": ["vu84": 1]])
+    #expect(personal.segment("jci4").map(\.text).joined() == "或")
+    #expect(personal.segment("ji3jci4ji3").map(\.text).joined() == "我或我")
+    #expect(personal.segment("url").map(\.text).joined() == "url")
+    #expect(text("v3") == "v3")
+    #expect(text("x86") == "x86")
+    #expect(text("ji3m/4npm") == "我用npm")
+}
+
+/// 有順序顛倒、漏打聲調習慣的使用者（輸入法實際的狀況）：組字區也顯示更正後的字，不會顯示成「譬ㄢ」。
+/// 2026-11-27 使用者回報「還是沒有優先採用推薦詞」：當時只用沒有學習紀錄的轉換器驗證，漏了這個。
+@Test func toneBeforeFinalWithPersonalHabitsShowsCorrection() {
+    var personal = segmenter
+    personal.typos = UserTypos(corrections: [
+        "ke6": ["ek6": 1], "ux;3": ["xu;3": 1], "jci4": ["cji4": 1], "ru,": ["ru, ": 1], "u5": ["u ": 2], "ru6,": ["ru,6": 1],
+    ])
+    for (typed, expected) in [("qu40", "片"), ("u/3qu40", "影片"), ("vu48", "下")] {
+        #expect(personal.segment(typed, showPending: true).map(\.text).joined() == expected)
+        #expect(personal.segment(typed).map(\.text).joined() == expected)
+        #expect(personal.candidates(typed).first?.text == expected)
+    }
+    #expect(personal.candidates("qu40").prefix(2).map(\.text) == ["片", "譬0"])
+    #expect(personal.segment("g492u03").map(\.text).joined() == "是9點")
 }
 
 /// 選回照打的解讀：譬0 就送出譬0。

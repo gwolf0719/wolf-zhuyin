@@ -57,6 +57,7 @@ run 'su3{down}9{enter}' 'ㄋㄧˇ'
 # 聲調按在結尾韻母前面：直接換成更正的詞；↓ 第二個選回照打的。
 run 'u/3qu40{enter}' '影片'
 run 'qu40{down}2{enter}' '譬0'
+run 'u/3qu40ji3{enter}' '影片我'
 
 if [[ $failed -gt 0 ]]; then
     echo "端對端測試：$failed 句失敗"
