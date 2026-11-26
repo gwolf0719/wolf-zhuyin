@@ -100,8 +100,8 @@ public struct Composer: Sendable {
         ("「", "」"), ("『", "』"), ("（", "）"), ("《", "》"), ("【", "】"), ("〈", "〉"), ("“", "”"), ("[", "]"), ("(", ")"),
         ("{", "}"), ("\"", "\""), ("'", "'"), ("`", "`"), ("<", ">"), ("**", "**"),
     ]
-    /// 選取的文字超過這個長度就不包（多半是整段內容，放進組字區不合適）。
-    public static let wrapLimit = 100
+    /// 選取的文字超過這個長度就不包（整篇文章放進組字區不合適）。多行的段落常超過 100 字，所以放寬到 2000。
+    public static let wrapLimit = 2000
 
     private let segmenter: Segmenter
     private var keys: [Character] = [] {
@@ -245,16 +245,17 @@ public struct Composer: Sendable {
 
     /// 在 app 裡選了一段文字後按符號鍵：列出成對的標點，選一個就把那段文字包起來。
     /// 選取的文字先放進組字區（app 會用組字區取代選取範圍），選定或取消時再送出。
-    /// 只在沒有組字時有效；有換行或太長的不包，回傳 nil 讓按鍵照常處理。
+    /// 只在沒有組字時有效；太長的不包，回傳 nil 讓按鍵照常處理。多行也可以（使用者 2026-11-26）。
     public mutating func wrap(_ selected: String) -> Result? {
-        guard keys.isEmpty, panel == nil, !selected.isEmpty, selected.count <= Self.wrapLimit,
-              !selected.contains(where: \.isNewline) else { return nil }
+        guard keys.isEmpty, panel == nil, !selected.isEmpty, selected.count <= Self.wrapLimit else { return nil }
         committedText = nil
         lastCommit = nil
         fix = nil
         // ASCII 要包成照打的字元，否則會被當成按鍵重新轉換。
         func fixed(_ text: String) -> String { String(text.map { $0.isASCII ? Segmenter.literal($0) : $0 }) }
-        let preview = selected.count <= 6 ? selected : String(selected.prefix(3)) + "…" + String(selected.suffix(2))
+        // 選字窗一列一個選項，預覽裡的換行顯示成 ⏎。
+        let flat = String(selected.map { $0.isNewline ? "⏎" : $0 })
+        let preview = flat.count <= 6 ? flat : String(flat.prefix(3)) + "…" + String(flat.suffix(2))
         keys = Array(fixed(selected))
         cursor = keys.count
         panel = Panel(items: Self.pairs.map { pair in

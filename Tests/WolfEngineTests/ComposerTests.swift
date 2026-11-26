@@ -1062,8 +1062,7 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     #expect(composer.handle(.right).candidates.first == "{x}")
     #expect(composer.handle(.enter).commit == "{x}")
 
-    // 組字中、有換行、太長的都不包，讓按鍵照常處理。
-    #expect(composer.wrap("a\nb") == nil)
+    // 組字中、太長的不包，讓按鍵照常處理。
     #expect(composer.wrap(String(repeating: "字", count: Composer.wrapLimit + 1)) == nil)
     _ = composer.handle(.character("j"))
     #expect(composer.wrap("你好") == nil)
@@ -1202,4 +1201,23 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     #expect(sorted.firstIndex(of: "【")! < 5)
     #expect(Set(sorted) == Set(defaults))
     #expect(sorted.firstIndex(of: "。")! > sorted.firstIndex(of: "，")!)
+}
+
+/// 多行的選取也能包（使用者 2026-11-26：只能包單行）：換行原樣保留，預覽把換行顯示成 ⏎。
+@Test func multiLineSelectionCanBeWrapped() {
+    var composer = Composer(segmenter: segmenter)
+    let opened = composer.wrap("第一行\nsecond line\n第三行")!
+    #expect(opened.marked == "第一行\nsecond line\n第三行")
+    #expect(opened.candidates.first == "「第一行…三行」")
+    #expect(composer.handle(.character("1")).commit == "「第一行\nsecond line\n第三行」")
+    // 取消時原文（含換行）原樣送回。
+    _ = composer.wrap("a\nb")
+    #expect(composer.handle(.escape).commit == "a\nb")
+    // 上限附近的長段落也要很快（每次按鍵都會重新排版組字區）。
+    let long = String(repeating: "這是一段很長的文字 with English.\n", count: Composer.wrapLimit / 30)
+    let start = Date()
+    #expect(composer.wrap(long) != nil)
+    #expect(composer.handle(.right).candidates.isEmpty == false)
+    #expect(composer.handle(.character("1")).commit?.count == long.count + 2)
+    #expect(Date().timeIntervalSince(start) < 0.5)
 }
