@@ -9,6 +9,7 @@ let usage = """
   wolf steps <文字>     一鍵一鍵打，印出每一步組字區的樣子
   wolf stability <檔案>... 列出打字途中中英被改判的句子
   wolf personal [-v]    用本機的學習紀錄評測（打錯還原率、常用詞組轉換）
+  wolf bench <檔案>...  一鍵一鍵打評測句，量每一鍵轉換要多久（接上本機學習紀錄，只讀不寫）
 詞庫路徑預設 Data/mcbopomofo/data.txt，可用環境變數 WOLF_LEXICON 覆蓋。
 """
 
@@ -206,6 +207,39 @@ case "stability":
         }
     }
     print("----\n句數 \(total)，打字途中有改判的 \(unstable) 句")
+
+case "bench":
+    // 量打字反應速度：每打一鍵，外殼都要重新轉換整段組字區。學習紀錄只讀，不會寫回。
+    let directory = ProcessInfo.processInfo.environment["WOLF_DATA"].map { URL(fileURLWithPath: $0) }
+        ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/WolfZhuyin")
+    var personal = segmenter
+    personal.userPhrases = UserPhrases(fileURL: directory.appendingPathComponent("user-phrases.json"))
+    personal.history = UserHistory(fileURL: directory.appendingPathComponent("history.json"))
+    personal.typos = UserTypos(corrections: UserTypos(fileURL: directory.appendingPathComponent("typos.json")).all)
+    var timings: [(seconds: Double, length: Int)] = []
+    for path in arguments.dropFirst() {
+        guard let content = try? String(contentsOfFile: path, encoding: .utf8) else { exit(1) }
+        for line in content.split(separator: "\n") where !line.hasPrefix("#") {
+            guard let typed = evaluation.type(String(line)) else { continue }
+            let keys = Array(typed.keys)
+            for length in 1...keys.count {
+                let start = DispatchTime.now().uptimeNanoseconds
+                _ = personal.segment(String(keys[..<length]), showPending: true)
+                timings.append((Double(DispatchTime.now().uptimeNanoseconds - start) / 1e9, length))
+            }
+        }
+    }
+    let sorted = timings.map(\.seconds).sorted()
+    func milliseconds(_ fraction: Double) -> String {
+        String(format: "%.2f", sorted[min(sorted.count - 1, Int(Double(sorted.count) * fraction))] * 1000)
+    }
+    print("按鍵 \(sorted.count) 次：中位數 \(milliseconds(0.5)) ms、p90 \(milliseconds(0.9)) ms、p99 \(milliseconds(0.99)) ms、最慢 \(milliseconds(1)) ms")
+    for bucket in stride(from: 0, to: 60, by: 10) {
+        let inBucket = timings.filter { $0.length > bucket && $0.length <= bucket + 10 }.map(\.seconds).sorted()
+        guard !inBucket.isEmpty else { continue }
+        print(String(format: "  組字區 %2d–%2d 鍵：中位數 %.2f ms、最慢 %.2f ms（%d 次）", bucket + 1, bucket + 10,
+                     inBucket[inBucket.count / 2] * 1000, inBucket.last! * 1000, inBucket.count))
+    }
 
 default:
     print(usage)

@@ -212,3 +212,20 @@ func typoKindClassification(mistyped: String, intended: String, kind: UserTypos.
     #expect(wrong.isEmpty, "\(wrong.prefix(20))")
 }
 
+
+/// 聲調鍵按在最後一個韻母鍵前面（qu40 想打「片」）：照打不改（是8、我自9 可能是對的），
+/// 但游標在那個韻母鍵後面按 ↓ 時，更正後的字詞排第一個，能成詞的（影片、我在）排在單字前面。
+@Test(arguments: [("u/3qu40", "影片"), ("qu40", "片"), ("vu48", "下"), ("ji3y49", "我在")])
+func toneBeforeFinalIsOfferedFirstOnDown(typed: String, expected: String) {
+    #expect(segmenter.segment(typed).map(\.text).joined() != expected)
+    #expect(segmenter.candidates(typed).first?.text == expected)
+}
+
+/// 選了之後整段換掉：「影譬0」選「影片」就是「影片」，不會留下 0。
+@Test func choosingToneBeforeFinalCandidateReplacesTheDigit() {
+    var composer = Composer(segmenter: segmenter)
+    for key in "u/3qu40" { _ = composer.handle(.character(key)) }
+    #expect(composer.handle(.down).candidates.first == "影片")
+    _ = composer.handle(.character("1"))
+    #expect(composer.handle(.enter).commit == "影片")
+}

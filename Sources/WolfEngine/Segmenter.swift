@@ -110,6 +110,8 @@ public struct Segmenter: Sendable {
         /// 證據夠強，單字也修：順序顛倒又夾著數字或符號鍵（k27、ur8 ），英文不會這樣打；
         /// 或是使用者習慣犯這一類的錯。
         var isStrong = false
+        /// 順序顛倒的修正：按鍵一個都沒少，只是換了順序。
+        var isReorder = false
     }
 
     /// 預測只在夠有把握時才出現。量出來的命中率（2026-11-12，`wolf predictions`）：
@@ -256,7 +258,7 @@ public struct Segmenter: Sendable {
         }
         guard let run = runs.first(where: { $0.contains { $0.end == cursor } }),
               let last = run.firstIndex(where: { $0.end == cursor }) else {
-            return switchToChinese(keys, cursor: cursor, afterChinese: afterChinese)
+            return toneBeforeFinal(keys, cursor: cursor, runs: runs) + switchToChinese(keys, cursor: cursor, afterChinese: afterChinese)
         }
         let syllables = run[...last].map { (reading: $0.reading, start: $0.start) }
         var result: [Candidate] = []
@@ -329,6 +331,32 @@ public struct Segmenter: Sendable {
     }
 
     /// 游標前面是英文或沒認出來的按鍵：提供強制轉成中文、以及注音符號本身。
+    /// 不是字母、單獨不成音的韻母鍵（ㄚㄞㄢㄦㄤㄝㄡㄥ）。
+    private static let finalKeys: Set<Character> = ["8", "9", "0", "-", ";", ",", ".", "/"]
+
+    /// 聲調鍵按在最後一個韻母鍵前面（qu40 想打 qu04「片」）：照打是「譬0」，打對的不自動改，
+    /// 所以游標停在那個單獨的韻母鍵後面按 ↓ 時，把順序更正後的字詞排在最前面（影片、片）。
+    private func toneBeforeFinal(_ keys: [Character], cursor: Int, runs: [[(reading: String, start: Int, end: Int)]]) -> [Candidate] {
+        guard weights.typoTolerance, cursor >= 2, cursor <= keys.count, Self.finalKeys.contains(keys[cursor - 1]),
+              "3467".contains(keys[cursor - 2]),
+              let run = runs.first(where: { $0.last?.end == cursor - 1 }), let previous = run.last else { return [] }
+        var result: [Candidate] = []
+        var seen: Set<String> = []
+        for option in syllableOptions(in: keys, from: previous.start) where option.isReorder && option.end == cursor {
+            // 和前面的字成詞的（影片）先列，再列單字（片）。
+            let before = run.dropLast()
+            for length in stride(from: min(before.count, Self.maxSyllablesPerWord - 1), through: 0, by: -1) {
+                let tail = before.suffix(length)
+                let reading = (tail.map(\.reading) + [option.reading]).joined(separator: "-")
+                let start = tail.first?.start ?? previous.start
+                for entry in entries(for: reading).prefix(length == 0 ? 3 : 1) where seen.insert(entry.text).inserted {
+                    result.append(Candidate(text: entry.text, start: start, reading: reading))
+                }
+            }
+        }
+        return result
+    }
+
     private func switchToChinese(_ keys: [Character], cursor: Int, afterChinese: Bool) -> [Candidate] {
         // 游標前面連續的非中文按鍵（英文字、沒認出來的按鍵），往前到中文、定案文字或空白為止。
         let all = pieces(keys, afterChinese: afterChinese, showPending: false)
@@ -921,9 +949,9 @@ extension Segmenter {
     private func syllableOptions(in keys: [Character], from start: Int) -> [SyllableOption] {
         var options: [SyllableOption] = []
         var seen: Set<String> = []
-        func add(_ reading: String, _ end: Int, _ penalty: Double, isStrong: Bool = false) {
+        func add(_ reading: String, _ end: Int, _ penalty: Double, isStrong: Bool = false, isReorder: Bool = false) {
             guard lexicon.syllables.contains(reading), seen.insert("\(reading)@\(end)").inserted else { return }
-            options.append(SyllableOption(reading: reading, end: end, penalty: penalty, isStrong: isStrong))
+            options.append(SyllableOption(reading: reading, end: end, penalty: penalty, isStrong: isStrong, isReorder: isReorder))
         }
         if let exact = Dachen.syllable(in: keys, from: start) { add(exact.reading, exact.end, 0) }
         guard weights.typoTolerance else { return options }
@@ -961,7 +989,7 @@ extension Segmenter {
             let spaceToneAllowed = length == 4 || (hasNonLetterSymbol && habits.contains(.reordered))
             guard keys[range].contains(where: isToneDigit) || (spaceToneAllowed && keys[range.upperBound - 1] == " "),
                   hasLetterSymbol(range), let reading = Dachen.syllable(fromUnordered: keys[range]) else { continue }
-            add(reading, range.upperBound, weights.typoOrder, isStrong: hasNonLetterSymbol || habits.contains(.reordered))
+            add(reading, range.upperBound, weights.typoOrder, isStrong: hasNonLetterSymbol || habits.contains(.reordered), isReorder: true)
         }
 
         // 2. 漏按聲調：2–3 個注音鍵後面緊接著一個打對的、帶數字聲調的音節。
