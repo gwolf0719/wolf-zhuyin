@@ -213,12 +213,29 @@ func typoKindClassification(mistyped: String, intended: String, kind: UserTypos.
 }
 
 
-/// 聲調鍵按在最後一個韻母鍵前面（qu40 想打「片」）：照打不改（是8、我自9 可能是對的），
-/// 但游標在那個韻母鍵後面按 ↓ 時，更正後的字詞排第一個，能成詞的（影片、我在）排在單字前面。
-@Test(arguments: [("u/3qu40", "影片"), ("qu40", "片"), ("vu48", "下"), ("ji3y49", "我在")])
-func toneBeforeFinalIsOfferedFirstOnDown(typed: String, expected: String) {
-    #expect(segmenter.segment(typed).map(\.text).joined() != expected)
-    #expect(segmenter.candidates(typed).first?.text == expected)
+/// 聲調鍵按在最後一個韻母鍵前面（qu40 想打「片」）：結尾的直接換成更正的字詞（使用者 2026-11-26 要求），
+/// 能成詞的（影片、我在）優先；照打的解讀（譬0、我自9）在選字窗第二個。
+@Test(arguments: [("u/3qu40", "影片", "影譬0"), ("qu40", "片", "譬0"), ("vu48", "下", "系8"), ("ji3y49", "我在", "我自9")])
+func trailingToneBeforeFinalIsSwapped(typed: String, expected: String, raw: String) {
+    #expect(segmenter.segment(typed).map(\.text).joined() == expected)
+    #expect(segmenter.segment(typed, showPending: true).map(\.text).joined() == expected)
+    #expect(segmenter.candidates(typed).prefix(2).map(\.text) == [expected, raw])
+}
+
+/// 只換結尾：後面還有字（是9點、我自9家）、或結尾是標點（是。）都照打。
+@Test func toneBeforeFinalInTheMiddleOrPunctuationIsKept() {
+    #expect(text("ji3y49ru8 ") == "我自9家")
+    #expect(text("ji3g4.") == "我是。")
+    #expect(text("vu,4vu7,") == "謝西，")
+}
+
+/// 選回照打的解讀：譬0 就送出譬0。
+@Test func choosingRawReadingAfterToneSwap() {
+    var composer = Composer(segmenter: segmenter)
+    for key in "qu40" { _ = composer.handle(.character(key)) }
+    #expect(composer.handle(.down).candidates.prefix(2) == ["片", "譬0"])
+    _ = composer.handle(.character("2"))
+    #expect(composer.handle(.enter).commit == "譬0")
 }
 
 /// 選了之後整段換掉：「影譬0」選「影片」就是「影片」，不會留下 0。

@@ -145,6 +145,8 @@ public struct Segmenter: Sendable {
         var isRawKey = false
         /// 結尾打到一半的音節。
         var isPending = false
+        /// 結尾自動換掉的聲調錯置（qu40 → 片）。
+        var isToneSwap = false
         /// 自動空白：輸出時在這段後面補一個空白。不算進這段的文字，所以游標位置照字計算。
         var trailingSpace = false
     }
@@ -239,9 +241,32 @@ public struct Segmenter: Sendable {
     public func candidates(_ input: String, cursor: Int? = nil, afterChinese: Bool = true, readings: [Int: String] = [:]) -> [Candidate] {
         let keys = Array(input)
         let cursor = cursor ?? keys.count
-        // 把整段的中文詞拆回音節，分成一串串連續的中文。
+        let all = pieces(keys, afterChinese: afterChinese, showPending: false)
+        let runs = Self.runs(of: all, readings: readings)
+        guard let run = runs.first(where: { $0.contains { $0.end == cursor } }),
+              let last = run.firstIndex(where: { $0.end == cursor }) else {
+            return toneBeforeFinal(keys, cursor: cursor, runs: runs) + switchToChinese(keys, cursor: cursor, afterChinese: afterChinese)
+        }
+        var result = candidates(keys, cursor: cursor, run: run, last: last)
+        // 結尾的聲調錯置已經自動換掉（片）：照打的解讀（譬0、是9）排第二個，選得回來。
+        if cursor == keys.count, let piece = all.last, piece.isToneSwap {
+            var strict = self
+            strict.weights.typoTolerance = false
+            let raw = strict.pieces(keys, afterChinese: afterChinese, showPending: false).filter { $0.keys.lowerBound >= piece.keys.lowerBound }
+            let text = raw.map(\.text).joined()
+            if !text.isEmpty, !result.contains(where: { $0.text == text }) {
+                // 照打的數字要鎖成原樣，不然跟在字後面又會被當成韻母換掉。
+                let inserted = String(text.map { $0.isASCII ? Self.literal($0) : $0 })
+                result.insert(Candidate(text: text, start: piece.keys.lowerBound, reading: nil, inserted: inserted), at: min(1, result.count))
+            }
+        }
+        return result
+    }
+
+    /// 把整段的中文詞拆回音節，分成一串串連續的中文。
+    private static func runs(of pieces: [Piece], readings: [Int: String] = [:]) -> [[(reading: String, start: Int, end: Int)]] {
         var runs: [[(reading: String, start: Int, end: Int)]] = [[]]
-        for piece in pieces(keys, afterChinese: afterChinese, showPending: false) {
+        for piece in pieces {
             // 選定過的字：照記下的讀音當成一個音節，和旁邊的字接成一串。
             if piece.reading == nil, piece.keys.count == 1, let reading = readings[piece.keys.lowerBound] {
                 runs[runs.count - 1].append((reading, piece.keys.lowerBound, piece.keys.upperBound))
@@ -256,10 +281,10 @@ public struct Segmenter: Sendable {
                 runs[runs.count - 1].append((String(syllable), start, end))
             }
         }
-        guard let run = runs.first(where: { $0.contains { $0.end == cursor } }),
-              let last = run.firstIndex(where: { $0.end == cursor }) else {
-            return toneBeforeFinal(keys, cursor: cursor, runs: runs) + switchToChinese(keys, cursor: cursor, afterChinese: afterChinese)
-        }
+        return runs
+    }
+
+    private func candidates(_ keys: [Character], cursor: Int, run: [(reading: String, start: Int, end: Int)], last: Int) -> [Candidate] {
         let syllables = run[...last].map { (reading: $0.reading, start: $0.start) }
         var result: [Candidate] = []
         var seen: Set<String> = []
@@ -612,13 +637,39 @@ public struct Segmenter: Sendable {
 
     func pieces(_ keys: [Character], afterChinese: Bool, showPending: Bool) -> [Piece] {
         guard !keys.isEmpty else { return [] }
+        // 結尾的韻母鍵也會被當成打到一半的音節（ㄢ）；能換成聲調錯置的更正時，組字區和送出一樣顯示更正後的字。
+        if showPending, keys.count >= 2, Self.swappableFinalKeys.contains(keys[keys.count - 1]), "3467".contains(keys[keys.count - 2]) {
+            let swapped = swappingTrailingTone(keys, resolve(bestPath(keys), afterChinese: afterChinese))
+            if swapped.last?.isToneSwap == true { return swapped }
+        }
         if showPending, let pending = pendingSyllable(in: keys) {
             // 結尾是打到一半的音節：前面的部分單獨轉換（不讓還沒打完的按鍵影響前面的判斷），結尾顯示注音符號。
             var result = resolve(pending.head, afterChinese: afterChinese)
             result.append(Piece(language: .chinese, keys: pending.start..<keys.count, text: pending.symbols, isPending: true))
             return result
         }
-        return resolve(bestPath(keys), afterChinese: afterChinese)
+        return swappingTrailingTone(keys, resolve(bestPath(keys), afterChinese: afterChinese))
+    }
+
+    /// 結尾的韻母鍵（數字 8 9 0 -、/）緊接在聲調後面、本身沒成字時，多半是聲調按早了（qu40 想打「片」）：
+    /// 直接換成更正的字詞，照打的解讀（譬0）放在選字窗第二個。使用者 2026-11-26 要求：明明有推薦就直接換上。
+    /// 只看最後一個鍵：後面再打字（是9點）時照打。逗號、句號、分號是標點，不換。
+    private static let swappableFinalKeys: Set<Character> = ["8", "9", "0", "-", "/"]
+
+    private func swappingTrailingTone(_ keys: [Character], _ result: [Piece]) -> [Piece] {
+        guard weights.typoTolerance, !correctsAnywhere, let lastKey = keys.last, Self.swappableFinalKeys.contains(lastKey),
+              let tail = result.last, tail.isRawKey, tail.keys == keys.count - 1..<keys.count else { return result }
+        let runs = Self.runs(of: result)
+        let syllables = runs.flatMap { $0 }
+        for candidate in toneBeforeFinal(keys, cursor: keys.count, runs: runs) {
+            guard let reading = candidate.reading,
+                  let index = result.firstIndex(where: { $0.keys.lowerBound == candidate.start }) else { continue }
+            let ends = syllables.filter { $0.start >= candidate.start && $0.end < keys.count - 1 }.map(\.end) + [keys.count]
+            guard ends.count == reading.split(separator: "-").count else { continue }
+            return Array(result[..<index]) + [Piece(language: .chinese, keys: candidate.start..<keys.count, text: candidate.text,
+                                                    reading: reading, syllableEnds: ends, isToneSwap: true)]
+        }
+        return result
     }
 
     /// 整串按鍵分數最高的解讀。
