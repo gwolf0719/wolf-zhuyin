@@ -121,6 +121,8 @@ public struct Composer: Sendable {
     public var longRunCommitEnabled = true
     /// 組字區只有照打的英文、數字時，Enter／Esc／↓ 交還 app，停頓後也由外殼先寫進輸入框。
     public var englishPassThroughEnabled = true
+    /// 符號表依用量排序；nil 就照預設順序。
+    public var symbolUsage: SymbolUsage?
 
     /// 組字區目前整串都是照打的英文、數字（游標在結尾、沒開選字窗）才有值；其他情況是 nil。
     public var plainEnglishText: String? {
@@ -452,7 +454,8 @@ public struct Composer: Sendable {
         switch key {
         case .character(Self.symbolKey):
             let chinese = text(of: keys[..<cursor]).last.map { !$0.isASCII } ?? afterChinese
-            let symbols = chinese ? Self.chineseSymbols : Self.englishSymbols
+            let defaults = chinese ? Self.chineseSymbols : Self.englishSymbols
+            let symbols = symbolUsage?.sorted(defaults) ?? defaults
             // 中文符號表裡的半形符號（[]）要照打：不包起來的話，接在中文後面又會被換成「」。
             panel = Panel(items: symbols.map { symbol in
                 let asIs = chinese && symbol.allSatisfy(\.isASCII)
@@ -641,6 +644,7 @@ public struct Composer: Sendable {
         }
         if let chosen {
             // 選定的文字直接寫進緩衝，取代原本那幾個按鍵；之後不再被重新轉換。
+            if current.isSymbols { symbolUsage?.record(chosen.text) }
             learn(chosen, after: String(keys[..<chosen.start]))
             // 從選字窗選了「可能是打錯」的候選：記成一次更正，累積成打錯習慣。
             let original = Array(keys[chosen.start..<cursor])

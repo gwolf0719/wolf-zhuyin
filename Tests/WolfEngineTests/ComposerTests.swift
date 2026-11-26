@@ -1174,3 +1174,32 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     for ch in "hello".map(Composer.Key.character) { _ = off.handle(ch) }
     #expect(off.handle(.enter).handled)
 }
+
+/// 符號表依最近用量排序：常用的符號往前，沒用過的保持預設順序，用過一次不會直接衝到第一個。
+@Test func symbolPanelSortsByRecentUsage() {
+    var composer = Composer(segmenter: segmenter)
+    composer.symbolUsage = SymbolUsage()
+    func open() -> [String] {
+        let result = composer.handle(.character("\\"))
+        return result.candidates
+    }
+    func pick(_ symbol: String) {
+        let index = open().firstIndex(of: symbol)!
+        _ = composer.handle(.character(Character("\(index % Composer.pageSize + 1)")))
+        _ = composer.handle(.escape)
+    }
+    #expect(open().first == "，")
+    _ = composer.handle(.escape)
+    // 「』」預設在第 2 頁，用過一次還不會超過第 1 個。
+    for _ in 0..<4 { pick("，") }
+    pick("，")
+    #expect(open().first == "，")
+    _ = composer.handle(.escape)
+    let usage = SymbolUsage()
+    let defaults = Composer.chineseSymbols
+    usage.record("【"); usage.record("【"); usage.record("【")
+    let sorted = usage.sorted(defaults)
+    #expect(sorted.firstIndex(of: "【")! < 5)
+    #expect(Set(sorted) == Set(defaults))
+    #expect(sorted.firstIndex(of: "。")! > sorted.firstIndex(of: "，")!)
+}

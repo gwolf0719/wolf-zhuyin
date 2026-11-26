@@ -67,11 +67,13 @@ public struct Preferences: Sendable, Equatable {
         public let phrases: UserPhrases
         public let history: UserHistory
         public let typos: UserTypos
+        public let symbols: SymbolUsage
 
-        public init(phrases: UserPhrases, history: UserHistory, typos: UserTypos) {
+        public init(phrases: UserPhrases, history: UserHistory, typos: UserTypos, symbols: SymbolUsage = SymbolUsage()) {
             self.phrases = phrases
             self.history = history
             self.typos = typos
+            self.symbols = symbols
         }
 
         /// 等三個紀錄排定的寫入都完成。程式結束前呼叫，否則最後一筆可能沒寫進檔案。
@@ -79,6 +81,7 @@ public struct Preferences: Sendable, Equatable {
             phrases.flush()
             history.flush()
             typos.flush()
+            symbols.flush()
         }
 
         /// 放在 `~/Library/Application Support/WolfZhuyin/`。
@@ -88,7 +91,8 @@ public struct Preferences: Sendable, Equatable {
             return Stores(
                 phrases: UserPhrases(fileURL: folder.appendingPathComponent("user-phrases.json")),
                 history: UserHistory(fileURL: folder.appendingPathComponent("history.json")),
-                typos: UserTypos(fileURL: folder.appendingPathComponent("typos.json"))
+                typos: UserTypos(fileURL: folder.appendingPathComponent("typos.json")),
+                symbols: SymbolUsage(fileURL: folder.appendingPathComponent("symbols.json"))
             )
         }
     }
@@ -112,6 +116,7 @@ public struct Preferences: Sendable, Equatable {
         composer.predictionsEnabled = predictions
         composer.longRunCommitEnabled = longRunCommit
         composer.englishPassThroughEnabled = englishPassThrough
+        if learning { composer.symbolUsage = stores?.symbols }
         return composer
     }
 }
