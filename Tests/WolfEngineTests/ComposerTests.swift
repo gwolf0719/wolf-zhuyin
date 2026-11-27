@@ -1219,5 +1219,6 @@ func typoSimilarity(mistyped: String, intended: String, expected: Bool) {
     #expect(composer.wrap(long) != nil)
     #expect(composer.handle(.right).candidates.isEmpty == false)
     #expect(composer.handle(.character("1")).commit?.count == long.count + 2)
-    #expect(Date().timeIntervalSince(start) < 0.5)
+    // 單獨跑約 0.04 秒；和其他測試併跑、機器忙時量過 1.1 秒，所以門檻放寬，只擋「變成好幾秒」的退化。
+    #expect(Date().timeIntervalSince(start) < 3)
 }
