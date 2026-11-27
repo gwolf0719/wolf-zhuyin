@@ -91,6 +91,8 @@ public struct Segmenter: Sendable {
         var syllableEnds: [Int] = []
         /// 這條邊是把打錯的按鍵修正後才成立的。
         var isCorrection = false
+        /// 修正的是按鍵順序（或使用者自己更正過的打法）。
+        var isReorder = false
         /// 原樣輸出的單一按鍵。
         var isRawKey = false
         /// 按鍵全是數字的中文詞（187 吧、54 至）。
@@ -201,7 +203,11 @@ public struct Segmenter: Sendable {
         let base = lexicon.entries[reading] ?? []
         guard let learned = userPhrases?.texts(for: reading), let latest = learned.first else { return base }
         let top = base.first?.score ?? -.infinity
-        var result = [Lexicon.Entry(text: latest, score: max(top + Self.learnedBonus, Self.learnedFloor))]
+        // 單字只選過一次不代表以後都要它（選過「各」之後「一個、5個」全變成「一各、5各」，2026-11-27）：
+        // 排到最前面、分數和最常見的字一樣，讓前後文（一＋個）還能決定；沒有其他線索時才用選過的字。
+        // 詞（兩個字以上）選過就是要它，維持加分。
+        let isWord = reading.contains("-")
+        var result = [Lexicon.Entry(text: latest, score: isWord ? max(top + Self.learnedBonus, Self.learnedFloor) : max(top, Self.learnedFloor))]
         result += base.filter { $0.text != latest }
         return result
     }
@@ -248,8 +254,13 @@ public struct Segmenter: Sendable {
             return toneBeforeFinal(keys, cursor: cursor, runs: runs) + switchToChinese(keys, cursor: cursor, afterChinese: afterChinese)
         }
         var result = candidates(keys, cursor: cursor, run: run, last: last)
+        // 組字區現在顯示的字詞一定排第一個：選字窗的第一個和畫面上的不一樣，使用者會以為有推薦卻沒採用。
+        if let shown = all.first(where: { $0.keys.upperBound == cursor && $0.reading != nil }),
+           let index = result.firstIndex(where: { $0.start == shown.keys.lowerBound && $0.text == shown.text }), index > 0 {
+            result.insert(result.remove(at: index), at: 0)
+        }
         // 結尾的聲調錯置已經自動換掉（片）：照打的解讀（譬0、是9）排第二個，選得回來。
-        if cursor == keys.count, cursor >= 2, Self.swappableFinalKeys.contains(keys[cursor - 1]), "3467".contains(keys[cursor - 2]),
+        if cursor == keys.count, cursor >= 2, Self.swappableFinalKeys.contains(keys[cursor - 1]), Self.isToneKey(keys[cursor - 2]),
            let piece = all.last, piece.reading != nil, weights.typoTolerance {
             var strict = self
             strict.weights.typoTolerance = false
@@ -364,11 +375,11 @@ public struct Segmenter: Sendable {
     /// 所以游標停在那個單獨的韻母鍵後面按 ↓ 時，把順序更正後的字詞排在最前面（影片、片）。
     private func toneBeforeFinal(_ keys: [Character], cursor: Int, runs: [[(reading: String, start: Int, end: Int)]]) -> [Candidate] {
         guard weights.typoTolerance, cursor >= 2, cursor <= keys.count, Self.finalKeys.contains(keys[cursor - 1]),
-              "3467".contains(keys[cursor - 2]),
+              Self.isToneKey(keys[cursor - 2]),
               let run = runs.first(where: { $0.last?.end == cursor - 1 }), let previous = run.last else { return [] }
         var result: [Candidate] = []
         var seen: Set<String> = []
-        for option in syllableOptions(in: keys, from: previous.start) where option.isReorder && option.end == cursor {
+        for option in syllableOptions(in: keys, from: previous.start) where (option.isReorder || option.isPersonal) && option.end == cursor {
             // 和前面的字成詞的（影片）先列，再列單字（片）。
             let before = run.dropLast()
             for length in stride(from: min(before.count, Self.maxSyllablesPerWord - 1), through: 0, by: -1) {
@@ -639,7 +650,7 @@ public struct Segmenter: Sendable {
     func pieces(_ keys: [Character], afterChinese: Bool, showPending: Bool) -> [Piece] {
         guard !keys.isEmpty else { return [] }
         // 結尾的韻母鍵也會被當成打到一半的音節（ㄢ）；能換成聲調錯置的更正時，組字區和送出一樣顯示更正後的字。
-        if showPending, keys.count >= 2, Self.swappableFinalKeys.contains(keys[keys.count - 1]), "3467".contains(keys[keys.count - 2]) {
+        if showPending, keys.count >= 2, Dachen.rimes[keys[keys.count - 1]] != nil, Self.isToneKey(keys[keys.count - 2]) {
             let swapped = swappingTrailingTone(keys, resolve(bestPath(keys), afterChinese: afterChinese))
             if let last = swapped.last, last.isToneSwap { return swapped }
             // 有順序顛倒的習慣時，整段轉換本身就把韻母鍵併進前一個字（qu40 → 片），也照那樣顯示。
@@ -648,20 +659,76 @@ public struct Segmenter: Sendable {
         }
         if showPending, let pending = pendingSyllable(in: keys) {
             // 結尾是打到一半的音節：前面的部分單獨轉換（不讓還沒打完的按鍵影響前面的判斷），結尾顯示注音符號。
-            var result = resolve(pending.head, afterChinese: afterChinese)
+            var result = swappingToneBeforePunctuation(keys, resolve(pending.head, afterChinese: afterChinese))
             result.append(Piece(language: .chinese, keys: pending.start..<keys.count, text: pending.symbols, isPending: true))
             return result
         }
-        return swappingTrailingTone(keys, resolve(bestPath(keys), afterChinese: afterChinese))
+        if !showPending, let completed = completingTrailingSyllable(keys, afterChinese: afterChinese) {
+            return swappingToneBeforePunctuation(keys, completed)
+        }
+        return swappingToneBeforePunctuation(keys, swappingTrailingTone(keys, resolve(bestPath(keys), afterChinese: afterChinese)))
     }
 
     /// 結尾的韻母鍵（數字 8 9 0 -、/）緊接在聲調後面、本身沒成字時，多半是聲調按早了（qu40 想打「片」）：
     /// 直接換成更正的字詞，照打的解讀（譬0）放在選字窗第二個。使用者 2026-11-26 要求：明明有推薦就直接換上。
-    /// 只看最後一個鍵：後面再打字（是9點）時照打。逗號、句號、分號是標點，不換。
+    /// 句中的由 bestPath 處理（落單的韻母數字算沒認出來的鍵）。逗號、句號、分號是標點，見 swappingToneBeforePunctuation。
+    private static let swappableFinalKeys: Set<Character> = ["8", "9", "0", "-", "/"]
+
     /// 常接在數字後面的字：前面的數字是真的數字，不當成按早的韻母。
     private static let numberUnits: Set<Character> = Set("點個歲號年月日元塊次分秒天位件本張台樓層週周倍成折人隻條")
 
-    private static let swappableFinalKeys: Set<Character> = ["8", "9", "0", "-", "/"]
+    /// 聲調鍵，空白（一聲）也算。
+    private static func isToneKey(_ key: Character) -> Bool { "3467 ".contains(key) }
+
+    /// 也是韻母的標點鍵（ㄝ ㄡ ㄤ）。
+    private static let punctuationFinalKeys: Set<Character> = [",", ".", ";"]
+
+    /// 聲調按在 ㄝ ㄡ ㄤ 前面（yj/3ru6, 想打「總結」）：這三個鍵同時是逗號、句號、分號，「字＋標點」極常見，
+    /// 所以只有在「和前面的字成詞（總結），而且照打的字不成詞（總集）」時才換；單字的放在選字窗第一個。
+    private func swappingToneBeforePunctuation(_ keys: [Character], _ pieces: [Piece]) -> [Piece] {
+        guard weights.typoTolerance, !correctsAnywhere else { return pieces }
+        var result = pieces
+        var index = 1
+        while index < result.count {
+            defer { index += 1 }
+            let mark = result[index]
+            let key = mark.keys.lowerBound
+            guard mark.keys.count == 1, mark.reading == nil, Self.punctuationFinalKeys.contains(keys[key]),
+                  key >= 2, Self.isToneKey(keys[key - 1]),
+                  result[index - 1].reading != nil, result[index - 1].keys.upperBound == key,
+                  let run = Self.runs(of: Array(result[..<index])).last, let previous = run.last, run.count >= 2 else { continue }
+            let before = run.dropLast()
+            search: for option in syllableOptions(in: keys, from: previous.start)
+            where (option.isReorder || option.isPersonal) && option.end == key + 1 {
+                for length in stride(from: min(before.count, Self.maxSyllablesPerWord - 1), through: 1, by: -1) {
+                    let tail = before.suffix(length)
+                    let prefix = tail.map(\.reading)
+                    guard let start = tail.first?.start, let first = result.firstIndex(where: { $0.keys.lowerBound == start }),
+                          entries(for: (prefix + [previous.reading]).joined(separator: "-")).isEmpty,
+                          let entry = entries(for: (prefix + [option.reading]).joined(separator: "-")).first,
+                          entry.score >= weights.typoMinWordScore else { continue }
+                    let piece = Piece(language: .chinese, keys: start..<key + 1, text: entry.text,
+                                      reading: (prefix + [option.reading]).joined(separator: "-"),
+                                      syllableEnds: tail.map(\.end) + [key + 1])
+                    result.replaceSubrange(first...index, with: [piece])
+                    index = first
+                    break search
+                }
+            }
+        }
+        return result
+    }
+
+    /// 送出時結尾是沒打聲調的音節、而且裡面有標點鍵當韻母（ru, 想打「接」）：英文不會這樣打，
+    /// 換成最常見的那個聲調的字，不要送出「ru,」。全是字母的（rm、cp）和夾數字的（v8）照打。
+    private func completingTrailingSyllable(_ keys: [Character], afterChinese: Bool) -> [Piece]? {
+        guard weights.typoTolerance, !correctsAnywhere, let pending = pendingSyllable(in: keys), keys.count - pending.start >= 2,
+              keys[pending.start...].contains(where: { Self.punctuationFinalKeys.contains($0) || $0 == "/" }) else { return nil }
+        let toned = Dachen.tones.values.compactMap { mark in entries(for: pending.symbols + mark).first.map { (entry: $0, reading: pending.symbols + mark) } }
+        guard let best = toned.max(by: { ($0.entry.score, $1.reading) < ($1.entry.score, $0.reading) }) else { return nil }
+        return resolve(pending.head, afterChinese: afterChinese)
+            + [Piece(language: .chinese, keys: pending.start..<keys.count, text: best.entry.text, reading: best.reading, syllableEnds: [keys.count])]
+    }
 
     private func swappingTrailingTone(_ keys: [Character], _ result: [Piece]) -> [Piece] {
         guard weights.typoTolerance, !correctsAnywhere, let lastKey = keys.last, Self.swappableFinalKeys.contains(lastKey),
@@ -697,19 +764,25 @@ public struct Segmenter: Sendable {
             if edge.reading != nil, UserHistory.hasBopomofo(edge.text) { return true }
             guard edge.isRawKey else { return false }
             let key = keys[edge.start]
-            if key.isASCIILetter || ("3467".contains(key) && edge.start > 0 && keys[edge.start - 1].isASCIILetter) { return true }
-            // 中文字的聲調後面落單的韻母鍵（qu40 的 0）：多半是聲調按早了。
-            return Self.swappableFinalKeys.contains(key) && edge.start >= 2 && "3467".contains(keys[edge.start - 1])
+            return key.isASCIILetter || ("3467".contains(key) && edge.start > 0 && keys[edge.start - 1].isASCIILetter)
+        }.map(\.start))
+        // 中文字的聲調後面落單的韻母數字（qu40 的 0）：多半是聲調按早了。只能併回前一個字（順序顛倒），
+        // 不可以被當成多按的鍵刪掉（他 8算 的 8 是真的數字）。
+        let strayRimes = Set(path.filter { edge in
+            guard edge.isRawKey else { return false }
+            let key = keys[edge.start]
+            return Self.swappableFinalKeys.contains(key) && edge.start >= 2 && Self.isToneKey(keys[edge.start - 1])
                 && path.contains { $0.end == edge.start && $0.reading != nil }
                 // 後面接數字或單位（是9點、第8個、890）時是在打數字。
                 && !(edge.end < keys.count && keys[edge.end].isASCIIDigit)
                 && !path.contains { $0.start == edge.end && $0.text.first.map(Self.numberUnits.contains) == true }
         }.map(\.start))
-        return unexplained.isEmpty ? path : bestPath(keys, unexplained: unexplained)
+        return unexplained.isEmpty && strayRimes.isEmpty ? path : bestPath(keys, unexplained: unexplained, strayRimes: strayRimes)
     }
 
     /// - Parameter unexplained: 不修正時沒認出來的字母鍵位置；修正的邊必須至少蓋到其中一個。
-    private func bestPath(_ keys: [Character], unexplained: Set<Int>) -> [Edge] {
+    /// - Parameter strayRimes: 聲調後面落單的韻母數字；只有順序顛倒的修正可以蓋。
+    private func bestPath(_ keys: [Character], unexplained: Set<Int>, strayRimes: Set<Int> = []) -> [Edge] {
         // 狀態＝（最後一條邊的語言, 最後一個字）。記最後一個字是為了算前後字搭配：
         // 「明天」後面接「再」或「在」，分數不同。每個位置只有幾條邊結束，狀態數量很小。
         struct State: Hashable {
@@ -760,7 +833,8 @@ public struct Segmenter: Sendable {
                     // 只看「原樣輸出的數字鍵」：前一個中文字的聲調（影片 qu04 後面的 187）和認得的英文字（mp4）都不算。
                     if edge.isDigitOnly, let previous = entry.edge, previous.isRawKey, previous.text.last?.isNumber == true { continue }
                     // 修正只能用在沒認出來的按鍵上，不可以蓋掉本來就打得對的內容。
-                    if edge.isCorrection, !(edge.start..<edge.end).contains(where: unexplained.contains) { continue }
+                    if edge.isCorrection, !(edge.start..<edge.end).contains(where: unexplained.contains),
+                       !(edge.isReorder && (edge.start..<edge.end).contains(where: strayRimes.contains)) { continue }
                     // 標點邊維持前一個語言狀態，不算切換。
                     if edge.punctuation != nil, state.language != edge.language { continue }
                     let switched = position > 0 && state.language != edge.language
@@ -937,6 +1011,8 @@ public struct Segmenter: Sendable {
             var penalty = 0.0
             /// 用了通用規則猜的修正（不是使用者自己的紀錄）：要成詞才採用。
             var isGuess = false
+            /// 修正的那個音節是順序顛倒（或使用者自己更正過的打法）。
+            var isReorder = false
         }
         var chains = [Chain()]
         for _ in 0..<Self.maxSyllablesPerWord where !chains.isEmpty {
@@ -951,6 +1027,7 @@ public struct Segmenter: Sendable {
                     next.ends.append(option.end)
                     next.penalty += option.penalty
                     if option.penalty < 0, !option.isPersonal, !option.isStrong { next.isGuess = true }
+                    if option.penalty < 0, option.isReorder || option.isPersonal { next.isReorder = true }
                     extended.append(next)
                     // 修正過的音節要連同旁邊的字組成一個夠常見的詞才採用：這是「使用者真的想打這個」最強的證據。
                     // 單一個字的修正太容易把 v3、x86 這類內容改掉。
@@ -963,7 +1040,7 @@ public struct Segmenter: Sendable {
                        !next.isGuess || (next.ends.count >= 2 && entry.score >= weights.typoMinWordScore) {
                         // 最常見的同音詞之外，也帶上幾個分數相近的，讓上下文去挑。
                         // 使用者自己選過的詞優先，那時不再讓上下文改掉。
-                        let isLearned = userPhrases?.texts(for: next.reading).isEmpty == false
+                        let isLearned = next.ends.count >= 2 && userPhrases?.texts(for: next.reading).isEmpty == false
                         let homophones = isLearned || weights.context == 0
                             ? [entry]
                             : entries(for: next.reading).prefix(weights.homophones).filter { entry.score - $0.score <= weights.homophoneMargin }
@@ -971,7 +1048,7 @@ public struct Segmenter: Sendable {
                             result.append(Edge(
                                 start: start, end: option.end, language: .chinese, text: homophone.text,
                                 score: homophone.score + next.penalty + weights.chineseWord, reading: next.reading,
-                                syllableEnds: next.ends, isCorrection: next.penalty < 0, isDigitOnly: isDigitOnly
+                                syllableEnds: next.ends, isCorrection: next.penalty < 0, isReorder: next.isReorder, isDigitOnly: isDigitOnly
                             ))
                         }
                     }
@@ -1052,7 +1129,10 @@ extension Segmenter {
             // 空白當一聲：三個鍵加空白的都修（ur8 、uvp ），全是字母的要成詞，除非使用者習慣顛倒順序；
             // 使用者習慣顛倒順序時，兩個鍵加空白（8w ）也修。修正只用在沒認出來的鍵上，所以不會改到英文字。
             let spaceToneAllowed = length == 4 || (hasNonLetterSymbol && habits.contains(.reordered))
-            guard keys[range].contains(where: isToneDigit) || (spaceToneAllowed && keys[range.upperBound - 1] == " "),
+            // 一聲的空白按在韻母前面（5 / 想打「爭」、uv p 想打「心」）：空白後面只剩一個韻母鍵。
+            let spaceBeforeRime = length >= 3 && keys[range.upperBound - 2] == " " && Dachen.rimes[keys[range.upperBound - 1]] != nil
+                && !keys[range.lowerBound..<range.upperBound - 2].contains(" ")
+            guard keys[range].contains(where: isToneDigit) || (spaceToneAllowed && keys[range.upperBound - 1] == " ") || spaceBeforeRime,
                   hasLetterSymbol(range), let reading = Dachen.syllable(fromUnordered: keys[range]) else { continue }
             add(reading, range.upperBound, weights.typoOrder, isStrong: hasNonLetterSymbol || habits.contains(.reordered), isReorder: true)
         }
@@ -1065,7 +1145,9 @@ extension Segmenter {
                   let symbols = Dachen.symbols(for: keys[range]),
                   let next = Dachen.syllable(in: keys, from: range.upperBound),
                   lexicon.syllables.contains(next.reading), isToneDigit(keys[next.end - 1]) else { continue }
-            for tone in Dachen.tones.values { add(symbols + tone, range.upperBound, weights.typoMissingTone) }
+            // 用標點鍵當韻母的（ru, 的 ㄝ）英文不會這樣打：單字也修。
+            let hasPunctuationFinal = keys[range].contains { Self.punctuationFinalKeys.contains($0) || $0 == "/" }
+            for tone in Dachen.tones.values { add(symbols + tone, range.upperBound, weights.typoMissingTone, isStrong: hasPunctuationFinal) }
         }
 
         // 3. 按到隔壁鍵：把其中一個注音鍵換成鍵盤上相鄰的鍵後，照標準打法能成立。聲調鍵本身不換。

@@ -58,6 +58,11 @@ run 'su3{down}9{enter}' 'ㄋㄧˇ'
 run 'u/3qu40{enter}' '影片'
 run 'qu40{down}2{enter}' '譬0'
 run 'u/3qu40ji3{enter}' '影片我'
+# 聲調按在逗號鍵（ㄝ）前面：成詞才換；沒打聲調就送出的換成最常見的字；一聲的空白按在韻母前面。
+run 'yj/3ru6,{enter}' '總結'
+run 'cl3,g4.{enter}' '好，是。'
+run 'ru,{enter}' '接'
+run 'tj /{enter}' '充'
 
 if [[ $failed -gt 0 ]]; then
     echo "端對端測試：$failed 句失敗"

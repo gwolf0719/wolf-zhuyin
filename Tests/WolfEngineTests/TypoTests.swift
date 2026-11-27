@@ -183,7 +183,7 @@ func typoKindClassification(mistyped: String, intended: String, kind: UserTypos.
 /// 例外（使用者 2026-11-27 要求「有推薦就採用」）：聲調後面落單的韻母數字（我自9家 → 我在家），見下面的測試。
 @Test func validInputIsNeverAutoCorrected() {
     #expect(text("vu.3") == "朽")
-    #expect(text("vu,4vu7,") == "謝西，")  // 西＋逗號是正確的解讀
+    #expect(text("cl3,g4.") == "好，是。")
     #expect(text("ji32u/4xk75ek41u042; ") == "我定了5個便當")
     // 有使用者習慣時也一樣。
     var personal = segmenter
@@ -208,6 +208,14 @@ func typoKindClassification(mistyped: String, intended: String, kind: UserTypos.
         index += 1
         guard index % 7 == 0, let entry = entries.first, entry.score > -5.5, let typed = evaluation.type(entry.text) else { continue }
         if personal.segment(typed.keys).map(\.text).joined() != text(typed.keys) { wrong.append(typed.keys) }
+        // 詞後面的逗號、句號不可以被併進前一個字（好， 不會變成別的字）。
+        // 只看本來就轉得出這個詞的（mp3、單獨的聲調鍵會被當成英數字，標點規則不同）。
+        // 每四個詞抽一個檢查，免得這個測試拖慢整組（其他測試有量時間的）。
+        for mark in [(",", "，"), (".", "。")] where index % 28 == 0 && text(typed.keys) == entry.text {
+            for converter in [segmenter, personal] where converter.segment(typed.keys + mark.0).map(\.text).joined() != text(typed.keys) + mark.1 {
+                wrong.append(typed.keys + mark.0)
+            }
+        }
     }
     #expect(wrong.isEmpty, "\(wrong.prefix(20))")
 }
@@ -229,7 +237,25 @@ func trailingToneBeforeFinalIsSwapped(typed: String, expected: String, raw: Stri
     #expect(text("g492u03") == "是9點")
     #expect(text("ej/48ek7") == "共8個")
     #expect(text("ji3g4.") == "我是。")
-    #expect(text("vu,4vu7,") == "謝西，")
+}
+
+/// 聲調按在 ㄝ ㄡ ㄤ（逗號、句號、分號鍵）前面：和前面的字成詞、照打的不成詞時才換（總集， → 總結）；
+/// 單字的不換，更正放在選字窗；沒打聲調就送出的（ru,）換成最常見的字，不送出英文字母。
+@Test func toneBeforePunctuationKeyNeedsAWord() {
+    #expect(text("yj/3ru6,") == "總結")
+    #expect(text("yj/3ru6,ji3") == "總結我")
+    #expect(text("vu,4vu7,") == "謝謝")
+    #expect(text("ru6,") == "及，")
+    #expect(segmenter.candidates("ru6,").first?.text == "結")
+    #expect(text("dk3g4,") == "可是，")
+    #expect(text("ru4u4,ji3") == "記憶，我")
+    // 漏打聲調、韻母是標點鍵。
+    #expect(text("ru,") == "接")
+    #expect(segmenter.segment("ru,", showPending: true).map(\.text).joined() == "ㄐㄧㄝ")
+    #expect(text("ji3ru,2k7") == "我接的")
+    #expect(text("rm") == "rm")
+    #expect(text("v8") == "v8")
+    #expect(text("hello,ji3") == "hello，我")
 }
 
 /// 有順序顛倒習慣時，整串都沒認出來的單字也採用推薦（jci4 → 或）；沒有習慣時要成詞才修。v3、x86 這類照打。
@@ -276,4 +302,32 @@ func trailingToneBeforeFinalIsSwapped(typed: String, expected: String, raw: Stri
     #expect(composer.handle(.down).candidates.first == "影片")
     _ = composer.handle(.character("1"))
     #expect(composer.handle(.enter).commit == "影片")
+}
+
+/// 一聲的空白按在韻母前面（tj / 想打「充」、uv p 想打「新」）：和聲調數字按早了一樣處理。
+/// 後面是真的數字（他 8算）不可以被當成多按的鍵刪掉。
+@Test func spaceBeforeRimeIsReordered() {
+    var personal = segmenter
+    personal.typos = UserTypos(corrections: ["ke6": ["ek6": 1], "ux;3": ["xu;3": 1], "uv84": ["vu84": 1], "38": ["8": 3], "u8": ["8": 3]])
+    for converter in [segmenter, personal] {
+        #expect(converter.segment("tj /").map(\.text).joined() == "充")
+        #expect(converter.segment("tj /", showPending: true).map(\.text).joined() == "充")
+        #expect(converter.segment("w8 8nj04").map(\.text).joined() == "他8算")
+        #expect(converter.segment("cl38nj04").map(\.text).joined() == "好8算")
+    }
+    #expect(["新", "心"].contains(personal.segment("uv p").map(\.text).joined()))
+}
+
+/// 單字選過一次不會蓋過前後文：選過「各」之後，「一個、5個」還是「個」（2026-11-27 使用者的紀錄裡變成「一各」）。
+/// 選字窗第一個永遠是組字區現在顯示的字。
+@Test func learnedSingleCharacterDoesNotOverrideContext() {
+    var personal = segmenter
+    let phrases = UserPhrases()
+    phrases.learn(reading: "ㄍㄜˋ", text: "各")
+    personal.userPhrases = phrases
+    #expect(personal.segment("u ek4").map(\.text).joined() == "一個")
+    #expect(personal.segment("ji32u/4xk75ek41u042; ").map(\.text).joined() == "我定了5個便當")
+    for keys in ["ek4", "u ek4", "ek4g4"] {
+        #expect(personal.candidates(keys).first?.text.last == personal.segment(keys).map(\.text).joined().last)
+    }
 }
